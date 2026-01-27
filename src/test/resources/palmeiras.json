@@ -1,0 +1,968 @@
+[
+  {
+    "id": 641458,
+    "name": "Carlos Miguel",
+    "age": 27,
+    "height": 2.04,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Goleiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 211,
+      "matchesPlayed": 51,
+      "goals": 0,
+      "assists": 0,
+      "ownGoals": 0,
+      "fromBench": 2,
+      "substituted": 1,
+      "yellow": 8,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": null,
+      "minutesPlayed": 4443,
+      "gk": {
+        "goalsConceded": 39,
+        "cleanSheets": 26
+      }
+    }
+  },
+  {
+    "id": 53015,
+    "name": "Marcelo Lomba",
+    "age": 39,
+    "height": 1.89,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Goleiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 973,
+      "matchesPlayed": 568,
+      "goals": 0,
+      "assists": 0,
+      "ownGoals": 0,
+      "fromBench": 1,
+      "substituted": 6,
+      "yellow": 40,
+      "yellowRed": 1,
+      "red": 2,
+      "penaltyGoals": 0,
+      "minutesPerGoal": null,
+      "minutesPlayed": 50924,
+      "gk": {
+        "goalsConceded": 577,
+        "cleanSheets": 204
+      }
+    }
+  },
+  {
+    "id": 1093863,
+    "name": "Aranha",
+    "age": 20,
+    "height": 1.9,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Goleiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 73,
+      "matchesPlayed": 48,
+      "goals": 0,
+      "assists": 0,
+      "ownGoals": 0,
+      "fromBench": 0,
+      "substituted": 0,
+      "yellow": 7,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 0,
+      "minutesPerGoal": null,
+      "minutesPlayed": 4305,
+      "gk": {
+        "goalsConceded": 42,
+        "cleanSheets": 18
+      }
+    }
+  },
+  {
+    "id": 458710,
+    "name": "Murilo",
+    "age": 28,
+    "height": 1.88,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Zagueiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 446,
+      "matchesPlayed": 329,
+      "goals": 25,
+      "assists": 8,
+      "ownGoals": 1,
+      "fromBench": 18,
+      "substituted": 25,
+      "yellow": 53,
+      "yellowRed": 4,
+      "red": 2,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 1098,
+      "minutesPlayed": 27457,
+      "gk": null
+    }
+  },
+  {
+    "id": 563692,
+    "name": "Bruno Fuchs",
+    "age": 26,
+    "height": 1.9,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Zagueiro",
+      "secondary": [
+        "Lateral Dir."
+      ]
+    },
+    "stats": {
+      "matchesRelated": 242,
+      "matchesPlayed": 156,
+      "goals": 5,
+      "assists": 3,
+      "ownGoals": 0,
+      "fromBench": 35,
+      "substituted": 30,
+      "yellow": 27,
+      "yellowRed": 1,
+      "red": 1,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 2210,
+      "minutesPlayed": 11052,
+      "gk": null
+    }
+  },
+  {
+    "id": 867847,
+    "name": "Micael",
+    "age": 25,
+    "height": 1.83,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Zagueiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 199,
+      "matchesPlayed": 136,
+      "goals": 4,
+      "assists": 1,
+      "ownGoals": 1,
+      "fromBench": 11,
+      "substituted": 15,
+      "yellow": 25,
+      "yellowRed": 1,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 2864,
+      "minutesPlayed": 11454,
+      "gk": null
+    }
+  },
+  {
+    "id": 215390,
+    "name": "Gustavo Gómez",
+    "age": 32,
+    "height": 1.85,
+    "nationality": "Paraguai",
+    "foot": "direito",
+    "position": {
+      "primary": "Zagueiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 564,
+      "matchesPlayed": 484,
+      "goals": 49,
+      "assists": 15,
+      "ownGoals": 2,
+      "fromBench": 14,
+      "substituted": 25,
+      "yellow": 108,
+      "yellowRed": 2,
+      "red": 4,
+      "penaltyGoals": 11,
+      "minutesPerGoal": 856,
+      "minutesPlayed": 41966,
+      "gk": null
+    }
+  },
+  {
+    "id": 1253807,
+    "name": "Luis Benedetti",
+    "age": 19,
+    "height": 1.97,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Zagueiro",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 81,
+      "matchesPlayed": 44,
+      "goals": 7,
+      "assists": 0,
+      "ownGoals": 0,
+      "fromBench": 7,
+      "substituted": 1,
+      "yellow": 8,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 503,
+      "minutesPlayed": 3522,
+      "gk": null
+    }
+  },
+  {
+    "id": 496268,
+    "name": "Joaquín Piquerez",
+    "age": 27,
+    "height": 1.84,
+    "nationality": [
+      "Uruguai",
+      "Itália"
+    ],
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Lateral Esq.",
+      "secondary": [
+        "Meia Esquerda"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 372,
+      "matchesPlayed": 332,
+      "goals": 20,
+      "assists": 37,
+      "ownGoals": 2,
+      "fromBench": 28,
+      "substituted": 64,
+      "yellow": 38,
+      "yellowRed": 0,
+      "red": 2,
+      "penaltyGoals": 5,
+      "minutesPerGoal": 1349,
+      "minutesPlayed": 26981,
+      "gk": null
+    }
+  },
+  {
+    "id": 851595,
+    "name": "Jefté",
+    "age": 22,
+    "height": 1.83,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Lateral Esq.",
+      "secondary": [
+        "Meia Esquerda"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 155,
+      "matchesPlayed": 128,
+      "goals": 6,
+      "assists": 15,
+      "ownGoals": 1,
+      "fromBench": 23,
+      "substituted": 22,
+      "yellow": 16,
+      "yellowRed": 1,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 1574,
+      "minutesPlayed": 9444,
+      "gk": null
+    }
+  },
+  {
+    "id": 849582,
+    "name": "Agustín Giay",
+    "age": 22,
+    "height": 1.8,
+    "nationality": "Argentina",
+    "foot": "direito",
+    "position": {
+      "primary": "Lateral Dir.",
+      "secondary": [
+        "Meia Direita"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 201,
+      "matchesPlayed": 161,
+      "goals": 3,
+      "assists": 2,
+      "ownGoals": 0,
+      "fromBench": 21,
+      "substituted": 55,
+      "yellow": 17,
+      "yellowRed": 1,
+      "red": 3,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 3879,
+      "minutesPlayed": 11637,
+      "gk": null
+    }
+  },
+  {
+    "id": 653348,
+    "name": "Khellven",
+    "age": 24,
+    "height": 1.76,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Lateral Dir.",
+      "secondary": [
+        "Meia Direita"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 345,
+      "matchesPlayed": 260,
+      "goals": 13,
+      "assists": 37,
+      "ownGoals": 0,
+      "fromBench": 67,
+      "substituted": 62,
+      "yellow": 21,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 1,
+      "minutesPerGoal": 1350,
+      "minutesPlayed": 17553,
+      "gk": null
+    }
+  },
+  {
+    "id": 707447,
+    "name": "Emiliano Martínez",
+    "age": 26,
+    "height": 1.85,
+    "nationality": [
+      "Uruguai",
+      "Itália"
+    ],
+    "foot": "direito",
+    "position": {
+      "primary": "Volante",
+      "secondary": [
+        "Meia Central"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 242,
+      "matchesPlayed": 198,
+      "goals": 3,
+      "assists": 3,
+      "ownGoals": 0,
+      "fromBench": 43,
+      "substituted": 83,
+      "yellow": 38,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 4414,
+      "minutesPlayed": 13243,
+      "gk": null
+    }
+  },
+  {
+    "id": 364972,
+    "name": "Marlon Freitas",
+    "age": 30,
+    "height": 1.85,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Volante",
+      "secondary": [
+        "Meia Central"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 538,
+      "matchesPlayed": 496,
+      "goals": 36,
+      "assists": 45,
+      "ownGoals": 2,
+      "fromBench": 65,
+      "substituted": 96,
+      "yellow": 66,
+      "yellowRed": 1,
+      "red": 2,
+      "penaltyGoals": 9,
+      "minutesPerGoal": 1070,
+      "minutesPlayed": 38518,
+      "gk": null
+    }
+  },
+  {
+    "id": 1268048,
+    "name": "Luis Pacheco",
+    "age": 17,
+    "height": 1.8,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Volante",
+      "secondary": [
+        "Meia Central"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 11,
+      "matchesPlayed": 9,
+      "goals": 0,
+      "assists": 0,
+      "ownGoals": 0,
+      "fromBench": 8,
+      "substituted": 1,
+      "yellow": 1,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": null,
+      "minutesPlayed": 176,
+      "gk": null
+    }
+  },
+  {
+    "id": 270188,
+    "name": "Lucas Evangelista",
+    "age": 30,
+    "height": 1.81,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Meia Central",
+      "secondary": [
+        "Meia Ofensivo"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 478,
+      "matchesPlayed": 383,
+      "goals": 27,
+      "assists": 31,
+      "ownGoals": 0,
+      "fromBench": 90,
+      "substituted": 121,
+      "yellow": 51,
+      "yellowRed": 0,
+      "red": 2,
+      "penaltyGoals": 3,
+      "minutesPerGoal": 959,
+      "minutesPlayed": 25883,
+      "gk": null
+    }
+  },
+  {
+    "id": 1004736,
+    "name": "Figueiredo",
+    "age": 19,
+    "height": 1.77,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Meia Central",
+      "secondary": [
+        "Meia Ofensivo"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 30,
+      "matchesPlayed": 13,
+      "goals": 3,
+      "assists": 1,
+      "ownGoals": 0,
+      "fromBench": 7,
+      "substituted": 5,
+      "yellow": 1,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 197,
+      "minutesPlayed": 592,
+      "gk": null
+    }
+  },
+  {
+    "id": 1116605,
+    "name": "Larson",
+    "age": 20,
+    "height": 1.83,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Meia Central",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 74,
+      "matchesPlayed": 59,
+      "goals": 7,
+      "assists": 1,
+      "ownGoals": 1,
+      "fromBench": 6,
+      "substituted": 30,
+      "yellow": 18,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 628,
+      "minutesPlayed": 4393,
+      "gk": null
+    }
+  },
+  {
+    "id": 203394,
+    "name": "Andreas Pereira",
+    "age": 30,
+    "height": 1.78,
+    "nationality": [
+      "Brasil",
+      "Bélgica"
+    ],
+    "foot": "direito",
+    "position": {
+      "primary": "Meia Ofensivo",
+      "secondary": [
+        "Volante"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 509,
+      "matchesPlayed": 422,
+      "goals": 42,
+      "assists": 51,
+      "ownGoals": 1,
+      "fromBench": 117,
+      "substituted": 184,
+      "yellow": 83,
+      "yellowRed": 1,
+      "red": 2,
+      "penaltyGoals": 3,
+      "minutesPerGoal": 634,
+      "minutesPlayed": 26618,
+      "gk": null
+    }
+  },
+  {
+    "id": 678439,
+    "name": "Mauricio",
+    "age": 24,
+    "height": 1.74,
+    "nationality": [
+      "Brasil",
+      "Paraguai"
+    ],
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Meia Ofensivo",
+      "secondary": [
+        "Ponta Direita"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 350,
+      "matchesPlayed": 294,
+      "goals": 45,
+      "assists": 40,
+      "ownGoals": 0,
+      "fromBench": 97,
+      "substituted": 157,
+      "yellow": 32,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 382,
+      "minutesPlayed": 17187,
+      "gk": null
+    }
+  },
+  {
+    "id": 432953,
+    "name": "Raphael Veiga",
+    "age": 30,
+    "height": 1.76,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Meia Ofensivo",
+      "secondary": [
+        "Seg. Atacante"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 553,
+      "matchesPlayed": 450,
+      "goals": 121,
+      "assists": 65,
+      "ownGoals": 0,
+      "fromBench": 95,
+      "substituted": 256,
+      "yellow": 50,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 39,
+      "minutesPerGoal": 243,
+      "minutesPlayed": 29378,
+      "gk": null
+    }
+  },
+  {
+    "id": 428791,
+    "name": "Paulinho",
+    "age": 25,
+    "height": 1.77,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Ponta Esquerda",
+      "secondary": [
+        "Centroavante"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 314,
+      "matchesPlayed": 250,
+      "goals": 69,
+      "assists": 23,
+      "ownGoals": 0,
+      "fromBench": 88,
+      "substituted": 93,
+      "yellow": 21,
+      "yellowRed": 0,
+      "red": 1,
+      "penaltyGoals": 2,
+      "minutesPerGoal": 220,
+      "minutesPlayed": 15166,
+      "gk": null
+    }
+  },
+  {
+    "id": 745191,
+    "name": "Ramón Sosa",
+    "age": 26,
+    "height": 1.79,
+    "nationality": [
+      "Paraguai",
+      "Argentina"
+    ],
+    "foot": "direito",
+    "position": {
+      "primary": "Ponta Esquerda",
+      "secondary": [
+        "Ponta Direita"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 235,
+      "matchesPlayed": 211,
+      "goals": 37,
+      "assists": 28,
+      "ownGoals": 0,
+      "fromBench": 58,
+      "substituted": 82,
+      "yellow": 24,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 3,
+      "minutesPerGoal": 363,
+      "minutesPlayed": 13418,
+      "gk": null
+    }
+  },
+  {
+    "id": 406766,
+    "name": "Bruno Rodrigues",
+    "age": 28,
+    "height": 1.77,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Ponta Esquerda",
+      "secondary": [
+        "Ponta Direita"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 296,
+      "matchesPlayed": 247,
+      "goals": 44,
+      "assists": 27,
+      "ownGoals": 0,
+      "fromBench": 68,
+      "substituted": 65,
+      "yellow": 25,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 8,
+      "minutesPerGoal": 382,
+      "minutesPlayed": 16822,
+      "gk": null
+    }
+  },
+  {
+    "id": 1124298,
+    "name": "Riquelme Fillipi",
+    "age": 19,
+    "height": 1.76,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Ponta Esquerda",
+      "secondary": [
+        "Ponta Direita"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 84,
+      "matchesPlayed": 73,
+      "goals": 28,
+      "assists": 4,
+      "ownGoals": 0,
+      "fromBench": 17,
+      "substituted": 27,
+      "yellow": 9,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 0,
+      "minutesPerGoal": 181,
+      "minutesPlayed": 5062,
+      "gk": null
+    }
+  },
+  {
+    "id": 465822,
+    "name": "Facundo Torres",
+    "age": 25,
+    "height": 1.77,
+    "nationality": "Uruguai",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Ponta Direita",
+      "secondary": [
+        "Ponta Esquerda"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 269,
+      "matchesPlayed": 255,
+      "goals": 73,
+      "assists": 41,
+      "ownGoals": 0,
+      "fromBench": 34,
+      "substituted": 118,
+      "yellow": 17,
+      "yellowRed": 1,
+      "red": 0,
+      "penaltyGoals": 11,
+      "minutesPerGoal": 265,
+      "minutesPlayed": 19364,
+      "gk": null
+    }
+  },
+  {
+    "id": 1082631,
+    "name": "Allan",
+    "age": 21,
+    "height": 1.74,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Ponta Direita",
+      "secondary": [
+        "Meia Ofensivo"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 136,
+      "matchesPlayed": 111,
+      "goals": 24,
+      "assists": 10,
+      "ownGoals": 0,
+      "fromBench": 46,
+      "substituted": 57,
+      "yellow": 8,
+      "yellowRed": 1,
+      "red": 1,
+      "penaltyGoals": 1,
+      "minutesPerGoal": 219,
+      "minutesPlayed": 5266,
+      "gk": null
+    }
+  },
+  {
+    "id": 159372,
+    "name": "Felipe Anderson",
+    "age": 32,
+    "height": 1.75,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Ponta Direita",
+      "secondary": [
+        "Ponta Esquerda"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 707,
+      "matchesPlayed": 592,
+      "goals": 84,
+      "assists": 96,
+      "ownGoals": 0,
+      "fromBench": 159,
+      "substituted": 221,
+      "yellow": 47,
+      "yellowRed": 1,
+      "red": 0,
+      "penaltyGoals": 1,
+      "minutesPerGoal": 456,
+      "minutesPlayed": 38287,
+      "gk": null
+    }
+  },
+  {
+    "id": 796742,
+    "name": "Vitinho",
+    "age": 22,
+    "height": 1.82,
+    "nationality": "Brasil",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Ponta Direita",
+      "secondary": [
+        "Meia Central"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 73,
+      "matchesPlayed": 49,
+      "goals": 7,
+      "assists": 4,
+      "ownGoals": 0,
+      "fromBench": 13,
+      "substituted": 14,
+      "yellow": 4,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 1,
+      "minutesPerGoal": 441,
+      "minutesPlayed": 3088,
+      "gk": null
+    }
+  },
+  {
+    "id": 943837,
+    "name": "Vitor Roque",
+    "age": 20,
+    "height": 1.74,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Centroavante",
+      "secondary": []
+    },
+    "stats": {
+      "matchesRelated": 226,
+      "matchesPlayed": 209,
+      "goals": 64,
+      "assists": 20,
+      "ownGoals": 0,
+      "fromBench": 80,
+      "substituted": 98,
+      "yellow": 31,
+      "yellowRed": 1,
+      "red": 1,
+      "penaltyGoals": 4,
+      "minutesPerGoal": 185,
+      "minutesPlayed": 11863,
+      "gk": null
+    }
+  },
+  {
+    "id": 844797,
+    "name": "José Manuel López",
+    "age": 25,
+    "height": 1.9,
+    "nationality": "Argentina",
+    "foot": "esquerdo",
+    "position": {
+      "primary": "Centroavante",
+      "secondary": [
+        "Seg. Atacante"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 300,
+      "matchesPlayed": 241,
+      "goals": 80,
+      "assists": 21,
+      "ownGoals": 0,
+      "fromBench": 93,
+      "substituted": 72,
+      "yellow": 35,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 4,
+      "minutesPerGoal": 172,
+      "minutesPlayed": 13795,
+      "gk": null
+    }
+  },
+  {
+    "id": 1158001,
+    "name": "Luighi",
+    "age": 19,
+    "height": 1.82,
+    "nationality": "Brasil",
+    "foot": "direito",
+    "position": {
+      "primary": "Centroavante",
+      "secondary": [
+        "Ponta Esquerda"
+      ]
+    },
+    "stats": {
+      "matchesRelated": 108,
+      "matchesPlayed": 62,
+      "goals": 19,
+      "assists": 7,
+      "ownGoals": 0,
+      "fromBench": 34,
+      "substituted": 24,
+      "yellow": 9,
+      "yellowRed": 0,
+      "red": 0,
+      "penaltyGoals": 2,
+      "minutesPerGoal": 143,
+      "minutesPlayed": 2720,
+      "gk": null
+    }
+  }
+]
