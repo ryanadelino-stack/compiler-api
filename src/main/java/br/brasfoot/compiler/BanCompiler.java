@@ -215,6 +215,24 @@ public final class BanCompiler {
         heightM
     );
 
+    if (DEBUG) {
+    System.out.println(
+        "[DEBUG] HEUR name=" + nome +
+        " pos=" + pos + " (" + posText + ")" +
+        " apps=" + st.matchesPlayed + "/" + st.matchesRelated +
+        " G=" + st.goals + " A=" + st.assists +
+        " bench=" + st.fromBench +
+        " sub=" + st.substituted +
+        " Y=" + st.yellow + " YR=" + st.yellowRed + " R=" + st.red +
+        " penG=" + st.penaltyGoals +
+        " mpg=" + st.minutesPerGoal +
+        " min=" + st.minutesPlayed +
+        " gc=" + st.goalsConceded +
+        " cs=" + st.cleanSheets +
+        " -> cr1=" + top2[0] + " cr2=" + top2[1]
+    );
+  }
+
     setAnyField(p, top2[0], "g", "cr1");
     setAnyField(p, top2[1], "h", "cr2");
 
