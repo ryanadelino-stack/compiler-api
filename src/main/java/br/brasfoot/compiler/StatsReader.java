@@ -23,6 +23,13 @@ public final class StatsReader {
     public double minutesPerGoal;
     public int minutesPlayed;
 
+    /**
+     * Minutos jogados apenas na temporada atual (campo adicionado pelo scraper).
+     * Vale -1 quando o campo não está presente no JSON (jogador sem dado de temporada).
+     * Usado pelo BanCompiler para ranquear titulares pela temporada atual.
+     */
+    public int minutesPlayedSeason;
+
     // GK
     public int goalsConceded;
     public int cleanSheets;
@@ -30,6 +37,7 @@ public final class StatsReader {
 
   public static Stats read(JsonObject player) {
     Stats s = new Stats();
+    s.minutesPlayedSeason = -1; // sentinela: campo ausente
 
     JsonObject stats = asObj(player.get("stats"));
     if (stats == null) {
@@ -49,6 +57,12 @@ public final class StatsReader {
     s.penaltyGoals = getInt(stats, "penaltyGoals");
     s.minutesPerGoal = getDouble(stats, "minutesPerGoal");
     s.minutesPlayed = getInt(stats, "minutesPlayed");
+
+    // minutesPlayedSeason: presente apenas em JSONs gerados com o scraper atualizado.
+    // Mantém -1 se ausente para que o BanCompiler saiba usar o fallback.
+    if (stats.has("minutesPlayedSeason") && !stats.get("minutesPlayedSeason").isJsonNull()) {
+      s.minutesPlayedSeason = getInt(stats, "minutesPlayedSeason");
+    }
 
     JsonObject gk = asObj(stats.get("gk"));
     if (gk != null) {
@@ -109,7 +123,7 @@ public final class StatsReader {
       if (el.isJsonPrimitive() && el.getAsJsonPrimitive().isNumber()) return el.getAsDouble();
       String s = el.getAsString();
       if (s == null) return 0.0;
-      s = s.trim().replace(".", "").replace(",", ".");
+      s = s.trim().replace(",", ".");
       return Double.parseDouble(s);
     } catch (Exception ignored) {
       return 0.0;
