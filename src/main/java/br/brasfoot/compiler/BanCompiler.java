@@ -54,9 +54,18 @@ public final class BanCompiler {
       players = JsonUtil.getArray(rootObj, "roster", "players");
     }
 
-    ArrayList<Object> jogadores = new ArrayList<>();
-    // Lista paralela: [índice, minutesPlayedSeason ou minutesPlayed]
+    // Listas separadas: seniors → l (jogadores), juniors → m (juniores)
+    ArrayList<Object> jogadores  = new ArrayList<>();
+    ArrayList<Object> juniores   = new ArrayList<>();
+
+    // Listas paralelas para cálculo de titulares (apenas seniors)
     ArrayList<int[]> minutesByIndex = new ArrayList<>();
+
+    // Lista paralela para ordenar juniores com desempate em cascata e limitar a MAX_JUNIORES.
+    // Cada entrada: [índice em juniores, minutesPlayed, matchesPlayed, matchesRelated]
+    ArrayList<int[]> juniorStats = new ArrayList<>();
+    final int MAX_JUNIORES = 20;
+    final int TITULARES_JUNIORES = 7;
 
     // Primeiro passo: verifica se ALGUM jogador do elenco tem minutesPlayedSeason.
     // Se sim, estamos num JSON novo — jogadores sem o campo realmente não jogaram na
@@ -76,20 +85,46 @@ public final class BanCompiler {
       for (JsonElement el : players) {
         if (!el.isJsonObject()) continue;
         JsonObject pj = el.getAsJsonObject();
+
+        // ── Roteamento por categoria ──────────────────────────────────────────
+        // "junior" → aba Juniores (.ban campo m)
+        // "senior" / ausente → aba Jogadores (.ban campo l)
+        String category = JsonUtil.getString(pj, "category");
+        boolean isJunior = "junior".equalsIgnoreCase(category);
+
         e.g p = buildPlayerFromJson(pj, team, countryIdOverride);
 
-        StatsReader.Stats st = StatsReader.read(pj);
-        int minsParaOrdem;
-        if (anyHasSeasonMins) {
-          // JSON novo: campo ausente = jogador não entrou em campo nessa temporada → 0
-          minsParaOrdem = (st.minutesPlayedSeason >= 0) ? st.minutesPlayedSeason : 0;
+        if (isJunior) {
+          // Juniores não participam do cálculo de titulares seniors.
+          // Usamos minutesPlayed (carreira) como critério primário; desempate por
+          // matchesPlayed e depois matchesRelated.
+          StatsReader.Stats stJ = StatsReader.read(pj);
+          juniorStats.add(new int[]{
+              juniores.size(),
+              stJ.minutesPlayed,
+              stJ.matchesPlayed,
+              stJ.matchesRelated
+          });
+          juniores.add(p);
+          if (DEBUG) {
+            Object nomeJ = getAnyField(p, "a");
+            System.out.println("[DEBUG] junior: " + nomeJ
+                + " mins=" + stJ.minutesPlayed
+                + " apps=" + stJ.matchesPlayed
+                + " rel=" + stJ.matchesRelated);
+          }
         } else {
-          // JSON antigo (sem minutesPlayedSeason em nenhum jogador): usa carreira
-          minsParaOrdem = st.minutesPlayed;
+          // Senior: registra minutos para seleção de titulares
+          StatsReader.Stats st = StatsReader.read(pj);
+          int minsParaOrdem;
+          if (anyHasSeasonMins) {
+            minsParaOrdem = (st.minutesPlayedSeason >= 0) ? st.minutesPlayedSeason : 0;
+          } else {
+            minsParaOrdem = st.minutesPlayed;
+          }
+          minutesByIndex.add(new int[]{jogadores.size(), minsParaOrdem});
+          jogadores.add(p);
         }
-        minutesByIndex.add(new int[]{jogadores.size(), minsParaOrdem});
-
-        jogadores.add(p);
       }
     }
 
@@ -116,21 +151,125 @@ public final class BanCompiler {
     }
     if (DEBUG) System.out.println("[DEBUG] Total titulares marcados: " + marked + "/" + TITULARES_COUNT);
 
-    // Lista na ordem original do JSON — o campo f=1 é o mecanismo de titular, não a ordem.
-    ArrayList<Object> jogadoresOrdenados = jogadores;
+    // 4) Seta jogadores seniors no campo l
+    setAnyField(team, jogadores, "l", "jogadores");
 
-    // 4) Seta jogadores/juniores
-    setAnyField(team, jogadoresOrdenados, "l", "jogadores");
-    Object jun = getAnyField(team, "m", "juniores");
-    if (jun == null) setAnyField(team, new ArrayList<>(), "m", "juniores");
+    // 5) Seta juniores no campo m:
+    //    - Se o JSON trouxe juniores → seleciona os top-MAX_JUNIORES por minutos
+    //    - Se não trouxe (campo category ausente em todos) → preserva o que estava no template
+    if (!juniores.isEmpty()) {
+      // Comparator com desempate em cascata:
+      //   1º minutesPlayed (carreira) DESC
+      //   2º matchesPlayed DESC
+      //   3º matchesRelated DESC
+      java.util.Comparator<int[]> junCmp = (a, b) -> {
+        if (b[1] != a[1]) return Integer.compare(b[1], a[1]); // minutesPlayed
+        if (b[2] != a[2]) return Integer.compare(b[2], a[2]); // matchesPlayed
+        return Integer.compare(b[3], a[3]);                   // matchesRelated
+      };
+      juniorStats.sort(junCmp);
 
-    // 5) Salva
+      // ── Seleciona os top MAX_JUNIORES ─────────────────────────────────────
+      ArrayList<Object> junioresFinal = new ArrayList<>();
+      // Usamos Set de índices para controlar quem entrou
+      java.util.Set<Integer> selectedIdx = new java.util.LinkedHashSet<>();
+
+      int junLimit = Math.min(MAX_JUNIORES, juniorStats.size());
+      for (int k = 0; k < junLimit; k++) {
+        selectedIdx.add(juniorStats.get(k)[0]);
+      }
+
+      // ── Garante ao menos 1 goleiro na lista ───────────────────────────────
+      // Verifica se algum dos selecionados é goleiro (pos=0, campo "e")
+      boolean hasGk = false;
+      for (int idx : selectedIdx) {
+        Object posVal = getAnyField(juniores.get(idx), "e", "posicao");
+        if (posVal instanceof Number && ((Number) posVal).intValue() == 0) {
+          hasGk = true;
+          break;
+        }
+      }
+
+      if (!hasGk) {
+        // Procura o melhor goleiro fora da lista atual (já na ordem junCmp)
+        int bestGkIdx = -1;
+        for (int[] entry : juniorStats) {
+          if (selectedIdx.contains(entry[0])) continue; // já está dentro
+          Object posVal = getAnyField(juniores.get(entry[0]), "e", "posicao");
+          if (posVal instanceof Number && ((Number) posVal).intValue() == 0) {
+            bestGkIdx = entry[0];
+            break;
+          }
+        }
+        if (bestGkIdx >= 0) {
+          // Remove o último da lista (pior por critério) e adiciona o goleiro
+          java.util.Iterator<Integer> it = selectedIdx.iterator();
+          int lastIdx = -1;
+          while (it.hasNext()) lastIdx = it.next();
+          if (lastIdx >= 0) {
+            selectedIdx.remove(lastIdx);
+            selectedIdx.add(bestGkIdx);
+            if (DEBUG) {
+              Object gkNome = getAnyField(juniores.get(bestGkIdx), "a");
+              Object rmNome = getAnyField(juniores.get(lastIdx), "a");
+              System.out.println("[DEBUG] junior GK obrigatorio: adicionou " + gkNome
+                  + ", removeu " + rmNome);
+            }
+          }
+        } else {
+          if (DEBUG) System.out.println("[DEBUG] junior: nenhum goleiro disponivel fora do top");
+        }
+      }
+
+      // ── Monta lista final na ordem do comparator ──────────────────────────
+      if (DEBUG) System.out.println("[DEBUG] Juniores selecionados (top " + MAX_JUNIORES + "):");
+      int rank = 1;
+      for (int[] entry : juniorStats) {
+        if (!selectedIdx.contains(entry[0])) continue;
+        junioresFinal.add(juniores.get(entry[0]));
+        if (DEBUG) {
+          Object nomeJ = getAnyField(juniores.get(entry[0]), "a");
+          System.out.println("[DEBUG]  " + rank + ". " + nomeJ
+              + " mins=" + entry[1]
+              + " apps=" + entry[2]
+              + " rel=" + entry[3]);
+        }
+        rank++;
+      }
+      if (DEBUG) System.out.println("[DEBUG] juniores selecionados: " + junioresFinal.size() + "/" + juniores.size());
+
+      // ── Marca os top-TITULARES_JUNIORES como titulares (f=1) ─────────────
+      int markedJun = 0;
+      if (DEBUG) System.out.println("[DEBUG] Titulares juniores (top " + TITULARES_JUNIORES + "):");
+      for (Object pJun : junioresFinal) {
+        if (markedJun >= TITULARES_JUNIORES) break;
+        Object nomeJ = getAnyField(pJun, "a");
+        // Pega os minutos do objeto já construído via campo paralelo
+        // (junioresFinal está na mesma ordem do comparator — basta contar)
+        setAnyField(pJun, 1, "f"); // f=1 = boneco verde (titular)
+        markedJun++;
+        if (DEBUG) System.out.println("[DEBUG]  " + markedJun + ". " + nomeJ);
+      }
+      if (DEBUG) System.out.println("[DEBUG] Total titulares juniores: " + markedJun + "/" + TITULARES_JUNIORES);
+
+      setAnyField(team, junioresFinal, "m", "juniores");
+    } else {
+      // Sem juniores no JSON: preserva lista do template (ou garante ArrayList vazio)
+      Object junExistente = getAnyField(team, "m", "juniores");
+      if (junExistente == null) {
+        setAnyField(team, new ArrayList<>(), "m", "juniores");
+      }
+      if (DEBUG) System.out.println("[DEBUG] juniores: nenhum no JSON, preservando template.");
+    }
+
+    // 6) Salva
     ensureParentDir(outBan);
     writeSerialized(outBan, team);
 
     if (DEBUG) {
       System.out.println("[DEBUG] wrote outBan=" + outBan);
-      System.out.println("[DEBUG] jogadores.size=" + jogadores.size());
+      System.out.println("[DEBUG] jogadores(senior).size=" + jogadores.size());
+      System.out.println("[DEBUG] juniores no .ban=" + Math.min(MAX_JUNIORES, juniores.size()) + "/" + juniores.size() + " (limite=" + MAX_JUNIORES + ")");
     }
   }
 
@@ -424,7 +563,7 @@ public final class BanCompiler {
     if (targetType.isInstance(v)) return v;
 
     if (targetType.isPrimitive()) {
-      if (targetType == int.class)     targetType = Integer.class;
+      if (targetType == int.class)          targetType = Integer.class;
       else if (targetType == short.class)   targetType = Short.class;
       else if (targetType == byte.class)    targetType = Byte.class;
       else if (targetType == long.class)    targetType = Long.class;
@@ -457,8 +596,8 @@ public final class BanCompiler {
 
     if (targetType == Boolean.class) {
       if (v instanceof Boolean b) return b;
-      if (v instanceof String s) return Boolean.parseBoolean(s.trim());
-      if (v instanceof Number n) return n.intValue() != 0;
+      if (v instanceof String s)   return Boolean.parseBoolean(s.trim());
+      if (v instanceof Number n)   return n.intValue() != 0;
     }
 
     if (targetType == String.class) return String.valueOf(v);
