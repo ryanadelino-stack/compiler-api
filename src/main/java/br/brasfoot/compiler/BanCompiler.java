@@ -9,14 +9,15 @@ import java.awt.Color;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
+import java.io.InvalidClassException;
+import java.io.ObjectInputFilter;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.io.ObjectInputFilter;
-import java.io.InvalidClassException;
+import java.util.Comparator;
 
 public final class BanCompiler {
 
@@ -54,16 +55,72 @@ public final class BanCompiler {
     }
 
     ArrayList<Object> jogadores = new ArrayList<>();
+    // Lista paralela: [índice, minutesPlayedSeason ou minutesPlayed]
+    ArrayList<int[]> minutesByIndex = new ArrayList<>();
+
+    // Primeiro passo: verifica se ALGUM jogador do elenco tem minutesPlayedSeason.
+    // Se sim, estamos num JSON novo — jogadores sem o campo realmente não jogaram na
+    // temporada (minutesPlayedSeason = 0). Se NENHUM tem o campo, é um JSON antigo e
+    // usamos minutesPlayed (carreira) como fallback para não perder a ordenação.
+    boolean anyHasSeasonMins = false;
     if (players != null) {
       for (JsonElement el : players) {
         if (!el.isJsonObject()) continue;
-        e.g p = buildPlayerFromJson(el.getAsJsonObject(), team, countryIdOverride);
+        StatsReader.Stats st = StatsReader.read(el.getAsJsonObject());
+        if (st.minutesPlayedSeason >= 0) { anyHasSeasonMins = true; break; }
+      }
+    }
+    if (DEBUG) System.out.println("[DEBUG] anyHasSeasonMins=" + anyHasSeasonMins);
+
+    if (players != null) {
+      for (JsonElement el : players) {
+        if (!el.isJsonObject()) continue;
+        JsonObject pj = el.getAsJsonObject();
+        e.g p = buildPlayerFromJson(pj, team, countryIdOverride);
+
+        StatsReader.Stats st = StatsReader.read(pj);
+        int minsParaOrdem;
+        if (anyHasSeasonMins) {
+          // JSON novo: campo ausente = jogador não entrou em campo nessa temporada → 0
+          minsParaOrdem = (st.minutesPlayedSeason >= 0) ? st.minutesPlayedSeason : 0;
+        } else {
+          // JSON antigo (sem minutesPlayedSeason em nenhum jogador): usa carreira
+          minsParaOrdem = st.minutesPlayed;
+        }
+        minutesByIndex.add(new int[]{jogadores.size(), minsParaOrdem});
+
         jogadores.add(p);
       }
     }
 
+    // Marca os 15 jogadores com mais minutos na temporada como titulares (f=1 = boneco verde).
+    // Jogadores com 0 minutos na temporada ficam com f=0 (reserva).
+    minutesByIndex.sort((a, b) -> Integer.compare(b[1], a[1]));
+
+    int TITULARES_COUNT = 15;
+    int marked = 0;
+    if (DEBUG) System.out.println("[DEBUG] Titulares (top " + TITULARES_COUNT + " por minutos):");
+    for (int k = 0; k < minutesByIndex.size() && marked < TITULARES_COUNT; k++) {
+      int idx  = minutesByIndex.get(k)[0];
+      int mins = minutesByIndex.get(k)[1];
+
+      if (mins <= 0) break; // demais também serão 0
+
+      setAnyField(jogadores.get(idx), 1, "f"); // f=1 = boneco verde (titular)
+      marked++;
+
+      if (DEBUG) {
+        Object nomeJ = getAnyField(jogadores.get(idx), "a");
+        System.out.println("[DEBUG]  " + marked + ". " + nomeJ + " mins=" + mins);
+      }
+    }
+    if (DEBUG) System.out.println("[DEBUG] Total titulares marcados: " + marked + "/" + TITULARES_COUNT);
+
+    // Lista na ordem original do JSON — o campo f=1 é o mecanismo de titular, não a ordem.
+    ArrayList<Object> jogadoresOrdenados = jogadores;
+
     // 4) Seta jogadores/juniores
-    setAnyField(team, jogadores, "l", "jogadores");
+    setAnyField(team, jogadoresOrdenados, "l", "jogadores");
     Object jun = getAnyField(team, "m", "juniores");
     if (jun == null) setAnyField(team, new ArrayList<>(), "m", "juniores");
 
@@ -95,7 +152,6 @@ public final class BanCompiler {
     }
     return new e.t();
   }
-
 
   private static void applyTeamFromJson(e.t time, JsonObject root, Integer teamIdOverride, Integer countryIdOverride) {
     // Se root == null (schema novo: array), mantém nome do template.
@@ -169,12 +225,15 @@ public final class BanCompiler {
         secondaryPositions
     );
 
-    // IMPORTANTE: escreva no campo realmente usado.
-    // Preferência: "f" (muito comum em builds do brasfoot.jar) e também "i" se existir.
-    setAnyField(p, ladoCalc, "f", "lado"); // preferir "f"
-    setAnyField(p, ladoCalc, "i");         // fallback/compat
+    // Campo "i" = lado no Brasfoot (0=Direito, 1=Esquerdo) — confirmado: sem isso todos ficam "D".
+    // Campo "f" = flag de titular (0=reserva, 1=titular) — confirmado: f=1 acende o boneco verde.
+    // Campo "b" = estrela de qualidade — não tocamos aqui.
+    setAnyField(p, ladoCalc, "i", "lado");
+    // f começa como 0 (reserva) e será setado como 1 no loop de titulares
 
-    // ===== Nacionalidade: SEMPRE a primeira =====
+    // ===== Nacionalidade =====
+    // Lê a primeira nacionalidade do JSON e converte para o ID do Brasfoot.
+    // Fallback: usa vid do time, ou 0 caso não mapeie.
     String natName = NationalityUtil.readFirstNationalityName(pj);
     Integer paisId = NationalityUtil.resolveCountryId(natName);
     if (paisId == null) {
@@ -188,10 +247,13 @@ public final class BanCompiler {
     if (paisId == null) paisId = 0;
     setAnyField(p, paisId, "c");
 
-    // ===== Stats (todos os 15 itens + GK) =====
+    if (DEBUG) System.out.println("[DEBUG] " + nome + " nat=" + natName + " paisId=" + paisId);
+
+    // ===== Características (cr1, cr2) =====
     StatsReader.Stats st = StatsReader.read(pj);
 
-    // ===== Características =====
+    Integer idadeParam = JsonUtil.getInt(pj, "age");
+
     int[] top2 = HeuristicsEngine.pickTop2CharacteristicsByManual(
         pos,
         posText,
@@ -211,39 +273,39 @@ public final class BanCompiler {
         st.minutesPlayed,
         st.goalsConceded,
         st.cleanSheets,
-        idade,
+        idadeParam,
         heightM
     );
 
     if (DEBUG) {
-    System.out.println(
-        "[DEBUG] HEUR name=" + nome +
-        " pos=" + pos + " (" + posText + ")" +
-        " apps=" + st.matchesPlayed + "/" + st.matchesRelated +
-        " G=" + st.goals + " A=" + st.assists +
-        " bench=" + st.fromBench +
-        " sub=" + st.substituted +
-        " Y=" + st.yellow + " YR=" + st.yellowRed + " R=" + st.red +
-        " penG=" + st.penaltyGoals +
-        " mpg=" + st.minutesPerGoal +
-        " min=" + st.minutesPlayed +
-        " gc=" + st.goalsConceded +
-        " cs=" + st.cleanSheets +
-        " -> cr1=" + top2[0] + " cr2=" + top2[1]
-    );
-  }
+      System.out.println("[DEBUG] buildPlayer: " + nome
+          + " pos=" + pos
+          + " apps=" + st.matchesPlayed
+          + " g=" + st.goals
+          + " a=" + st.assists
+          + " y=" + st.yellow
+          + " yr=" + st.yellowRed
+          + " r=" + st.red
+          + " penG=" + st.penaltyGoals
+          + " mpg=" + st.minutesPerGoal
+          + " min=" + st.minutesPlayed
+          + " gc=" + st.goalsConceded
+          + " cs=" + st.cleanSheets
+          + " -> cr1=" + top2[0] + " cr2=" + top2[1]
+      );
+    }
 
     setAnyField(p, top2[0], "g", "cr1");
     setAnyField(p, top2[1], "h", "cr2");
 
     if (DEBUG) {
-      Object storedSideF = getAnyField(p, "f", "lado");
-      Object storedSideI = getAnyField(p, "i");
+      Object storedLado = getAnyField(p, "i");
+      Object storedTitular = getAnyField(p, "f");
       System.out.println("[DEBUG] " + nome
           + " posText=" + TextUtil.safe(posText)
           + " sec=" + secondaryPositions
           + " foot=" + TextUtil.safe(foot)
-          + " -> ladoCalc=" + ladoCalc + " storedSide(f/lado)=" + storedSideF + " storedSide(i)=" + storedSideI
+          + " -> ladoCalc=" + ladoCalc + " lado(i)=" + storedLado + " titular(f)=" + storedTitular
           + " apps=" + st.matchesPlayed
           + " g=" + st.goals
           + " a=" + st.assists
@@ -270,21 +332,20 @@ public final class BanCompiler {
     return el;
   }
 
-private static Object readSerialized(Path file) throws IOException, ClassNotFoundException {
-  try (ObjectInputStream ois =
-           new ObjectInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
+  private static Object readSerialized(Path file) throws IOException, ClassNotFoundException {
+    try (ObjectInputStream ois =
+             new ObjectInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
 
-    ois.setObjectInputFilter(
-        ObjectInputFilter.merge(
-            SafeDeserialization.createFilter(),
-            ObjectInputFilter.Config.createFilter("maxdepth=20;maxrefs=50000;maxbytes=5242880")
-        )
-    );
+      ois.setObjectInputFilter(
+          ObjectInputFilter.merge(
+              SafeDeserialization.createFilter(),
+              ObjectInputFilter.Config.createFilter("maxdepth=20;maxrefs=50000;maxbytes=5242880")
+          )
+      );
 
-    return ois.readObject();
+      return ois.readObject();
+    }
   }
-}
-
 
   private static void writeSerialized(Path file, Object obj) throws IOException {
     try (ObjectOutputStream oos = new ObjectOutputStream(new BufferedOutputStream(Files.newOutputStream(file)))) {
@@ -363,14 +424,14 @@ private static Object readSerialized(Path file) throws IOException, ClassNotFoun
     if (targetType.isInstance(v)) return v;
 
     if (targetType.isPrimitive()) {
-      if (targetType == int.class) targetType = Integer.class;
-      else if (targetType == short.class) targetType = Short.class;
-      else if (targetType == byte.class) targetType = Byte.class;
-      else if (targetType == long.class) targetType = Long.class;
+      if (targetType == int.class)     targetType = Integer.class;
+      else if (targetType == short.class)   targetType = Short.class;
+      else if (targetType == byte.class)    targetType = Byte.class;
+      else if (targetType == long.class)    targetType = Long.class;
       else if (targetType == boolean.class) targetType = Boolean.class;
-      else if (targetType == double.class) targetType = Double.class;
-      else if (targetType == float.class) targetType = Float.class;
-      else if (targetType == char.class) targetType = Character.class;
+      else if (targetType == double.class)  targetType = Double.class;
+      else if (targetType == float.class)   targetType = Float.class;
+      else if (targetType == char.class)    targetType = Character.class;
     }
 
     if (v instanceof Number n) {
