@@ -567,25 +567,39 @@ public final class HeuristicsEngine {
   }
 
   private static double scorePasVol(Metrics m) {
+    // Pas é principal indicador de volante distribuidor — Des/Pas e Mar/Pas devem
+    // aparecer com frequência para volantes com boa participação ofensiva.
     double pontos = 0;
-    if (m.assistsPerGame >= 0.05) pontos += 35;
-    else if (m.assistsPerGame >= 0.03) pontos += 25;
+    if (m.assistsPerGame >= 0.08) pontos += 55;
+    else if (m.assistsPerGame >= 0.05) pontos += 42;
+    else if (m.assistsPerGame >= 0.03) pontos += 30;
+    // Participação (gols+assistências) reforça o perfil distribuidor
+    if (m.participationPerGame >= 0.15) pontos += 30;
+    else if (m.participationPerGame >= 0.10) pontos += 20;
+    else if (m.participationPerGame >= 0.07) pontos += 12;
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia central")))
       pontos += 20;
     if (m.disciplineIndex >= 0.80) pontos += 15;
-    if (m.participationPerGame >= 0.10) pontos += 20;
     return pontos;
   }
 
   private static double scoreFinVol(Metrics m) {
+    // Fin só deve aparecer (Des/Fin ou Mar/Fin) para volantes com números de gol
+    // realmente relevantes. Thresholds elevados para evitar que qualquer volante
+    // com poucos gols receba Fin como característica secundária.
     double pontos = 0;
-    if (m.goalsPerGame >= 0.08) pontos += 50;
-    else if (m.goalsPerGame >= 0.05) pontos += 40;
-    else if (m.goalsPerGame >= 0.03) pontos += 30;
+    if (m.goalsPerGame >= 0.12) pontos += 55;      // goleador atípico para a posição
+    else if (m.goalsPerGame >= 0.08) pontos += 38;  // muito bom
+    else if (m.goalsPerGame >= 0.05) pontos += 20;  // razoável — ainda competitivo
+    // Abaixo de 0.05 não pontua: Mar/Fin e Des/Fin não devem aparecer para
+    // volantes com taxa de gol baixa ou mediana.
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia ofensivo")))
       pontos += 20;
-    if (m.penaltyGoals > 0) pontos += 10;
-    if (m.mpg > 0 && m.mpg < 1500) pontos += 15;
+    // Pênaltis cobrados indicam vocação ofensiva, mas não sobrepõem a taxa de gol
+    if (m.penaltyGoals >= 3) pontos += 12;
+    else if (m.penaltyGoals > 0) pontos += 5;
+    if (m.mpg > 0 && m.mpg < 1000) pontos += 15;  // threshold mais rigoroso (era 1500)
+    else if (m.mpg > 0 && m.mpg < 1500) pontos += 7;
     return pontos;
   }
 
@@ -1079,7 +1093,15 @@ public final class HeuristicsEngine {
     String pair2 = idxToName(second) + "/" + idxToName(first);
 
     if (allowed.contains(pair1) || allowed.contains(pair2)) {
-      if (DEBUG) System.out.println("[DEBUG] Selected pair: " + pair1 + " (allowed)");
+      // Se apenas o par inverso está no allowed, usa a ordem canônica do allowed.
+      // Ex.: allowed tem "Cru/Fin" mas scoring gerou first=Fin, second=Cru →
+      //      sem swap teríamos "Fin/Cru"; com swap geramos "Cru/Fin". Correto.
+      if (!allowed.contains(pair1) && allowed.contains(pair2)) {
+        int tmp = first; first = second; second = tmp;
+        if (DEBUG) System.out.println("[DEBUG] Canonical swap: " + pair1 + " → " + idxToName(first) + "/" + idxToName(second));
+      } else {
+        if (DEBUG) System.out.println("[DEBUG] Selected pair: " + pair1 + " (allowed)");
+      }
     } else {
       // Busca o melhor par permitido dentre os top-5 candidatos por score
       List<Integer> topCandidates = sorted.stream()
@@ -1101,9 +1123,14 @@ public final class HeuristicsEngine {
             double scoreSum = scores.get(a) + scores.get(b);
             if (scoreSum > bestScore) {
               bestScore = scoreSum;
-              bestA = a;
-              bestB = b;
               foundAllowed = true;
+              // Respeita a ordem canônica do allowed list:
+              // se apenas p2 (b/a) bate, o par canônico é (b, a), não (a, b).
+              if (allowed.contains(p1)) {
+                bestA = a; bestB = b;
+              } else {
+                bestA = b; bestB = a;
+              }
             }
           }
         }
