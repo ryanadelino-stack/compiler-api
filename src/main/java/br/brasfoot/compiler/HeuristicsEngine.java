@@ -980,11 +980,16 @@ public final class HeuristicsEngine {
 
     // Posição genérica com stats → resolve para subposição de scoring específica.
     // O pool de pares permitidos (allowed combinations) também é atualizado para
-    // refletir a subposição resolvida.
+    // refletir a subposição resolvida. resolvedPos é calculado a partir do subperfil
+    // resolvido para garantir consistência com a característica que será gravada.
+    int resolvedPos = pos; // será sobrescrito para posições genéricas
     if (profile.startsWith("GENERIC_")) {
       if (DEBUG) System.out.println("[DEBUG] Generic profile '" + profile
           + "' resolved for scoring (pos=" + pos + ")");
       profile = resolveGenericToScoringProfile(profile, pos, m);
+      resolvedPos = profileToPos(profile);
+      if (DEBUG) System.out.println("[DEBUG] resolvedPos=" + resolvedPos
+          + " para perfil resolvido=" + profile);
     }
 
     Map<Integer, Double> scores = new HashMap<>();
@@ -1116,7 +1121,7 @@ public final class HeuristicsEngine {
       }
     }
 
-    return new int[] { first, second };
+    return new int[] { first, second, resolvedPos };
   }
 
   private static String idxToName(int idx) {
@@ -1140,42 +1145,93 @@ public final class HeuristicsEngine {
   }
 
   // -------------------------------------------------------------------------
+  // Conversão de perfil → posição numérica do Brasfoot
+  // -------------------------------------------------------------------------
+
+  /**
+   * Converte um perfil de subposição na posição numérica correspondente do Brasfoot.
+   *   0 = Goleiro  1 = Lateral  2 = Zagueiro  3 = Meia  4 = Atacante
+   *
+   * Usado para garantir que, após um sorteio ou resolução de perfil genérico,
+   * a posição numérica escrita no .ban esteja alinhada com a característica sorteada.
+   * Exemplo: se "Defensor" sorteia perfil LAT_OF e par Cru/Vel, o jogador também
+   * deve ser salvo como Lateral (1) no Brasfoot, não como Zagueiro (2).
+   */
+  private static int profileToPos(String profile) {
+    if (profile == null) return 4;
+    switch (profile) {
+      case "GK":                      return 0;
+      case "LAT_DEF": case "LAT_OF":  return 1;
+      case "ZAG_NORMAL": case "ZAG_OFENSIVO": return 2;
+      case "VOL":
+      case "M_CENTRAL":
+      case "M_ESQUERDA_DIREITA":
+      case "M_OFENSIVO":              return 3;
+      case "ATAC_REC":
+      case "ATAC_CA":
+      case "ATAC_PONTA":              return 4;
+      default:                        return 4;
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Fallback aleatório baseado no pool de pares da subposição
   // -------------------------------------------------------------------------
 
   /**
    * Sorteia aleatoriamente um par do pool de pares para o perfil dado.
+   * Retorna int[3]: {cr1, cr2, resolvedPos}.
    *
-   * Casos tratados:
-   *   GENERIC_DEF → pool unificado de LAT_DEF + LAT_OF + ZAG_NORMAL + ZAG_OFENSIVO
-   *   GENERIC_MID → pool unificado de VOL + M_CENTRAL + M_ESQUERDA_DIREITA + M_OFENSIVO
-   *   GENERIC_ATK → pool unificado de ATAC_REC + ATAC_CA + ATAC_PONTA
-   *   Perfil específico → pool da subposição exata
-   *   Perfil desconhecido → pool genérico do grupo por pos
+   * resolvedPos é a posição numérica do Brasfoot que deve ser gravada no .ban,
+   * garantindo que característica e posição fiquem sempre consistentes.
+   *
+   * GENERIC_DEF — tratamento especial:
+   *   Sorteia um subperfil ({LAT_DEF, LAT_OF, ZAG_NORMAL, ZAG_OFENSIVO}) ANTES
+   *   de escolher o par, para que o resolvedPos reflita exatamente o grupo sorteado.
+   *   Ex.: se LAT_OF for sorteado → par Cru/Vel → resolvedPos=1 (Lateral).
+   *        se ZAG_NORMAL for sorteado → par Des/Mar → resolvedPos=2 (Zagueiro).
+   *
+   * GENERIC_MID / GENERIC_ATK — o pos nunca varia dentro do grupo (sempre 3 ou 4),
+   *   então sorteia do pool unificado diretamente.
+   *
+   * Perfil específico → pool da subposição exata; resolvedPos = profileToPos(profile).
+   * Perfil desconhecido → pool genérico do grupo; resolvedPos = pos original.
    */
   private static int[] getFallbackRandom(String profile, int pos) {
     Set<String> pool;
+    int resolvedPos = pos; // default: mantém pos original
 
-    // Posições genéricas do Transfermarkt: sorteia de todo o pool do grupo
+    Random rng = new Random();
+
     if ("GENERIC_DEF".equals(profile)) {
-      pool = new LinkedHashSet<>();
-      pool.addAll(getAllowedCombinations("LAT_DEF"));
-      pool.addAll(getAllowedCombinations("LAT_OF"));
-      pool.addAll(getAllowedCombinations("ZAG_NORMAL"));
-      pool.addAll(getAllowedCombinations("ZAG_OFENSIVO"));
-      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_DEF → pool=" + pool.size() + " pares");
+      // Sorteia subperfil ANTES do par — garante alinhamento entre pos e características
+      List<String> defProfiles = new ArrayList<>(
+          List.of("LAT_DEF", "LAT_OF", "ZAG_NORMAL", "ZAG_OFENSIVO"));
+      Collections.shuffle(defProfiles, rng);
+      String chosenProfile = defProfiles.get(0);
+      pool = getAllowedCombinations(chosenProfile);
+      resolvedPos = profileToPos(chosenProfile);
+      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_DEF → subperfil="
+          + chosenProfile + " resolvedPos=" + resolvedPos + " pool=" + pool.size() + " pares");
+
     } else if ("GENERIC_MID".equals(profile)) {
       pool = getGenericGroupPool(3);
+      resolvedPos = 3;
       if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_MID → pool=" + pool.size() + " pares");
+
     } else if ("GENERIC_ATK".equals(profile)) {
       pool = getGenericGroupPool(4);
+      resolvedPos = 4;
       if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_ATK → pool=" + pool.size() + " pares");
+
     } else {
       // Perfil específico conhecido
       pool = getAllowedCombinations(profile);
+      resolvedPos = profileToPos(profile);
       // Perfil desconhecido ou vazio → usa pool genérico do grupo por pos
       if (pool.isEmpty()) {
         pool = getGenericGroupPool(pos);
+        resolvedPos = pos;
         if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: profile='" + profile
             + "' vazio → usando getGenericGroupPool(pos=" + pos + ")");
       }
@@ -1183,16 +1239,17 @@ public final class HeuristicsEngine {
 
     // Último recurso absoluto (não deveria acontecer)
     if (pool.isEmpty()) {
-      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: pool vazio após todos os fallbacks, retornando Pas/Vel");
-      return new int[]{11, 13};
+      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: pool vazio, retornando Pas/Vel pos=" + pos);
+      return new int[]{11, 13, pos};
     }
 
     List<String> list = new ArrayList<>(pool);
-    Collections.shuffle(list, new Random());
+    Collections.shuffle(list, rng);
     int[] pair = parseCharPair(list.get(0));
 
-    if (DEBUG) System.out.println("[DEBUG] getFallbackRandom [" + profile + "]: sorteou " + list.get(0));
-    return new int[]{pair[0], pair[1]};
+    if (DEBUG) System.out.println("[DEBUG] getFallbackRandom [" + profile + "]: sorteou "
+        + list.get(0) + " resolvedPos=" + resolvedPos);
+    return new int[]{pair[0], pair[1], resolvedPos};
   }
 
   /**
