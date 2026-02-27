@@ -1,8 +1,16 @@
 // HeuristicsEngine.java
 // Pacote: br.brasfoot.compiler
 //
-// Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v4.0
-// Fevereiro 2026 – Versão 4.0 Final
+// Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v5.0
+// Fevereiro 2026 – Versão 5.0 — Pares e Fallback Aprimorados
+//
+// Mudanças v5.0:
+//   - Pool de pares por subposição atualizado (tabela mestre do design doc)
+//   - Novo perfil M_ESQUERDA_DIREITA (Meia Esquerda / Meia Direita)
+//   - Detecção de "Ala" → LAT_OF por padrão
+//   - Fallback (sem stats) agora sorteia aleatoriamente do pool da subposição detectada
+//   - Quando scoring produz par fora do allowed list, busca o melhor par permitido (top-5)
+//   - Posição genérica sem subposição → pool unificado do grupo
 //
 // Índices das características (0..13):
 // 0 Colocacao, 1 Defesa Penalty, 2 Reflexo, 3 Saida gol,
@@ -12,18 +20,21 @@
 package br.brasfoot.compiler;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public final class HeuristicsEngine {
 
-  public static final String HEURISTICS_ENGINE_MARKER = "V4.0-FINAL-MANUAL";
+  public static final String HEURISTICS_ENGINE_MARKER = "V5.0-PARES-APRIMORADOS";
 
   private static final boolean DEBUG =
       Boolean.parseBoolean(System.getProperty("brasfoot.debug", "false"));
@@ -58,17 +69,17 @@ public final class HeuristicsEngine {
     // derived (already present)
     final double g90, a90, p90, c90, playRate, rotation;
 
-    // additional derived metrics (computed on demand or stored)
-    final double goalsPerGame;          // taxa_gol
-    final double assistsPerGame;        // taxa_assistencia
-    final double participationPerGame;  // taxa_participacao_gol
-    final double yellowPerGame;         // taxa_cartao_amarelo
-    final double redPerGame;            // taxa_cartao_vermelho
-    final double disciplineIndex;       // indice_disciplina
-    final double minsPerGame;           // minutos_por_jogo
-    final double regularity;            // regularidade = played/related
-    final double subRate;               // taxa_substituicao
-    final double benchRate;             // taxa_banco
+    // additional derived metrics
+    final double goalsPerGame;
+    final double assistsPerGame;
+    final double participationPerGame;
+    final double yellowPerGame;
+    final double redPerGame;
+    final double disciplineIndex;
+    final double minsPerGame;
+    final double regularity;
+    final double subRate;
+    final double benchRate;
 
     // for goalkeepers
     final double goalsConcededPerGame;
@@ -115,9 +126,9 @@ public final class HeuristicsEngine {
       this.assistsPerGame = (double) assists / p;
       this.participationPerGame = (double) (goals + assists) / p;
       this.yellowPerGame = (double) yellow / p;
-      int redEquivalent = red + yellowRed; // each yellowRed counts as one sending-off
+      int redEquivalent = red + yellowRed;
       this.redPerGame = (double) redEquivalent / p;
-      double totalCards = yellow + 3.0 * redEquivalent; // yellowRed already counted once
+      double totalCards = yellow + 3.0 * redEquivalent;
       this.disciplineIndex = Math.max(0, Math.min(1, 1.0 - (totalCards / p / 2.0)));
       this.minsPerGame = (double) mp / p;
       this.regularity = (related > 0) ? (double) played / related : 0.0;
@@ -168,8 +179,42 @@ public final class HeuristicsEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Profile detection helpers
+  // Profile detection helpers (corrected order)
   // -------------------------------------------------------------------------
+  private static boolean isVolante(Metrics m) {
+    String p = m.posText.toLowerCase(Locale.ROOT);
+    return m.pos == 3 && p.contains("volante");
+  }
+
+  private static boolean isMeiaOfensivo(Metrics m) {
+    String p = m.posText.toLowerCase(Locale.ROOT);
+    if (p.contains("meia ofensivo") || p.contains("meia atacante")) return true;
+    return m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia atacante"));
+  }
+
+  private static boolean isMeiaCentral(Metrics m) {
+    String p = m.posText.toLowerCase(Locale.ROOT);
+    if (p.contains("meia central")) return true;
+    return m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante"));
+  }
+
+  /**
+   * Meia Esquerda ou Meia Direita — subposição lateral de meio-campo.
+   * Detectada pelo posText principal vindo do Transfermarkt.
+   * Não deve colidir com meia central, meia ofensivo nem volante (verificados antes).
+   */
+  private static boolean isMeiaEsquerdaDireita(Metrics m) {
+    String p = m.posText.toLowerCase(Locale.ROOT);
+    return p.contains("meia esquerda")
+        || p.contains("meia direita")
+        || p.contains("left mid")
+        || p.contains("right mid")
+        || p.contains("left midfielder")
+        || p.contains("right midfielder")
+        || p.equals("meia esq")
+        || p.equals("meia dir");
+  }
+
   private static boolean isLateralDefensivo(Metrics m) {
     return m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("zagueiro"));
   }
@@ -184,20 +229,6 @@ public final class HeuristicsEngine {
   private static boolean isZagueiroOfensivo(Metrics m) {
     if (m.played == 0) return false;
     return m.goalsPerGame >= 0.06 || (m.goalsPerGame >= 0.04 && m.assists >= 5);
-  }
-
-  private static boolean isMeiaOfensivo(Metrics m) {
-    String p = m.posText.toLowerCase(Locale.ROOT);
-    if (p.contains("meia ofensivo") || p.contains("meia atacante")) return true;
-    return m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia atacante"));
-  }
-
-  private static boolean isMeiaCentral(Metrics m) {
-    String p = m.posText.toLowerCase(Locale.ROOT);
-    if (p.contains("meia central")) return true;
-    if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
-      return true;
-    return false;
   }
 
   private static boolean isCentroavante(Metrics m) {
@@ -217,41 +248,109 @@ public final class HeuristicsEngine {
     return m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("segundo"));
   }
 
+  /**
+   * Detecta se o posText é uma categoria posicional GENÉRICA do Transfermarkt
+   * (sem especificação de subposição).
+   *
+   * Retorna:
+   *   "GENERIC_DEF" — "Defensor", "Defensores", "Defender", etc.
+   *   "GENERIC_MID" — "Meio-Campo", "Meio Campo", "Midfield", "Mittelfeld"
+   *   "GENERIC_ATK" — "Atacante", "Forward", "Stürmer" (sem sub como Ponta, CA, etc.)
+   *   null          — posText tem subposição específica (não é genérico)
+   *
+   * A verificação de tokens negativos garante que "Lateral Defensivo" não
+   * seja confundido com "Defensor".
+   */
+  private static String detectGenericCategory(String posText) {
+    if (posText == null || posText.isBlank()) return null;
+    String p = posText.toLowerCase(Locale.ROOT).trim();
+
+    // ── Defensor genérico ──────────────────────────────────────────────────
+    // Aceita: "Defensor", "Defensores", "Defender", "Abwehr", "Verteidiger"
+    // Rejeita: qualquer texto que já contenha subposição específica
+    boolean isDefToken = p.equals("defensor") || p.equals("defensores")
+        || p.equals("defender") || p.equals("defenders")
+        || p.equals("abwehr") || p.equals("verteidiger");
+    boolean hasSpecificDef = p.contains("lateral") || p.contains("zagueiro")
+        || p.contains("ala") || p.contains("back") || p.contains("cb")
+        || p.contains("innenverteidiger") || p.contains("außenverteidiger");
+    if (isDefToken && !hasSpecificDef) return "GENERIC_DEF";
+
+    // ── Meio-campo genérico ────────────────────────────────────────────────
+    // Aceita: "Meio-Campo", "Meio Campo", "Midfield", "Mittelfeld"
+    // Rejeita: textos com subposição (volante, meia central, meia ofensivo, etc.)
+    boolean isMidToken = p.equals("meio-campo") || p.equals("meio campo")
+        || p.equals("midfield") || p.equals("mittelfeld");
+    boolean hasSpecificMid = p.contains("volante") || p.contains("central")
+        || p.contains("ofensivo") || p.contains("esquerda") || p.contains("direita")
+        || p.contains("defensivo") || p.contains("attacking") || p.contains("defensive");
+    if (isMidToken && !hasSpecificMid) return "GENERIC_MID";
+
+    // ── Atacante genérico ──────────────────────────────────────────────────
+    // Aceita: "Atacante", "Forward", "Stürmer", "Sturmer"
+    // Rejeita: textos com subposição (ponta, centroavante, segundo atacante, etc.)
+    boolean isAtkToken = p.equals("atacante") || p.equals("forward")
+        || p.equals("stürmer") || p.equals("sturmer") || p.equals("forwards");
+    boolean hasSpecificAtk = p.contains("ponta") || p.contains("centroavante")
+        || p.contains("segundo") || p.contains("extremo") || p.contains("winger")
+        || p.contains("centre-forward") || p.contains("mittelstürmer");
+    if (isAtkToken && !hasSpecificAtk) return "GENERIC_ATK";
+
+    return null; // posText tem subposição específica
+  }
+
+  /**
+   * Quando um jogador tem estatísticas mas veio com posição genérica,
+   * resolve para a subposição de scoring mais adequada com base no pos numérico
+   * e nas métricas disponíveis.
+   * Usado apenas no caminho scored (played > 0).
+   */
+  private static String resolveGenericToScoringProfile(String genericProfile, int pos, Metrics m) {
+    switch (genericProfile) {
+      case "GENERIC_DEF":
+        // pos==1 → Lateral; pos==2 → Zagueiro; outro → tenta inferir
+        if (pos == 1) return (m.participationPerGame >= 0.08) ? "LAT_OF" : "LAT_DEF";
+        if (pos == 2) return isZagueiroOfensivo(m) ? "ZAG_OFENSIVO" : "ZAG_NORMAL";
+        // pos ambíguo: sem stats ofensivas → Zagueiro Normal; com → Lateral Ofensivo
+        return (m.participationPerGame >= 0.08) ? "LAT_OF" : "ZAG_NORMAL";
+
+      case "GENERIC_MID":
+        // Sem token de posição → assume Meia Central como default de scoring
+        return "M_CENTRAL";
+
+      case "GENERIC_ATK":
+        // Heurística por métricas
+        if (m.goalsPerGame >= 0.20 && m.height >= 1.85) return "ATAC_CA";
+        if (m.assistsPerGame >= 0.08)                    return "ATAC_REC";
+        return "ATAC_PONTA";
+
+      default:
+        return genericProfile; // não deveria chegar aqui
+    }
+  }
+
   // -------------------------------------------------------------------------
-  // Global adjustments (casos especiais)
+  // Global adjustments
   // -------------------------------------------------------------------------
   private static void applyGlobalAdjustments(Map<Integer, Double> scores, Metrics m) {
-    // Veterans (>33)
     if (m.age != null && m.age > 33) {
-      // +15 to Pas, Arm, Col; +10 to DPe, SGo? (manual says Pas +15, Arm +15, Col +10)
-      // but also penalties to Vel -20, Res -10
       modifyScore(scores, 11, 15.0); // Pas
       modifyScore(scores, 4, 15.0);  // Arm
       modifyScore(scores, 0, 10.0);  // Col
-      modifyScore(scores, 1, 10.0);  // DPe (maybe? not in manual, but Col got +10, DPe might also benefit)
-      modifyScore(scores, 3, 10.0);  // SGo (maybe)
+      modifyScore(scores, 1, 10.0);  // DPe
+      modifyScore(scores, 3, 10.0);  // SGo
       modifyScore(scores, 13, -20.0); // Vel
       modifyScore(scores, 12, -10.0); // Res
     }
-
-    // Young (<21)
     if (m.age != null && m.age < 21) {
       modifyScore(scores, 13, 20.0); // Vel
       modifyScore(scores, 8, 15.0);  // Dri
       modifyScore(scores, 1, -15.0); // DPe
       modifyScore(scores, 12, -10.0); // Res
     }
-
-    // Low games (<10) – not specified exactly, but we can apply conservative defaults
-    // We'll trust that the base scores still work; manual says "dar mais peso para altura/idade"
-    // but we can incorporate via global adjustments already applied.
-    // We'll add a small boost to height-based scores if very few games.
-    if (m.played < 10) {
-      // boost to SGo for tall keepers, Cab for tall players, etc.
-      if (m.height >= 1.90) {
-        modifyScore(scores, 3, 10.0); // SGo
-        modifyScore(scores, 5, 10.0); // Cab
-      }
+    if (m.played < 10 && m.height >= 1.90) {
+      modifyScore(scores, 3, 10.0); // SGo
+      modifyScore(scores, 5, 10.0); // Cab
     }
   }
 
@@ -260,10 +359,10 @@ public final class HeuristicsEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Scoring functions per characteristic and position
+  // Scoring functions (as per manual)
   // -------------------------------------------------------------------------
 
-  // ---------------- Goleiro ----------------
+  // Goleiro
   private static double scoreCol(Metrics m) {
     double pontos = 0;
     if (m.cleanSheetRate >= 0.40) pontos += 40;
@@ -281,7 +380,7 @@ public final class HeuristicsEngine {
     if (m.goalsConcededPerGame <= 1.0) pontos += 35;
     else if (m.goalsConcededPerGame <= 1.3) pontos += 25;
     if (m.cleanSheetRate >= 0.30) pontos += 30;
-    double mediaDefesas = (m.played - m.cs) / (double) m.played; // manual "média de defesas"
+    double mediaDefesas = (m.played - m.cs) / (double) m.played;
     if (mediaDefesas >= 0.70) pontos += 20;
     if (m.age != null && m.age <= 30) pontos += 15;
     return pontos;
@@ -310,7 +409,7 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // ---------------- Zagueiro ----------------
+  // Zagueiro
   private static double scoreDesZag(Metrics m) {
     double pontos = 0;
     if (m.yellowPerGame >= 0.15) pontos += 35;
@@ -339,7 +438,7 @@ public final class HeuristicsEngine {
     if (m.height >= 1.88) pontos += 25;
     if (m.penaltyGoals > 0) pontos += 15;
     if (m.participationPerGame >= 0.08) pontos += 10;
-    if (m.played >= 300 && m.goalsPerGame >= 0.06) pontos += 20; // veterano goleador
+    if (m.played >= 300 && m.goalsPerGame >= 0.06) pontos += 20;
     return pontos;
   }
 
@@ -377,7 +476,7 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // ---------------- Lateral ----------------
+  // Lateral
   private static double scoreCruLat(Metrics m) {
     double pontos = 20; // base
     if (m.assistsPerGame >= 0.10) pontos += 40;
@@ -420,10 +519,9 @@ public final class HeuristicsEngine {
     if (m.goalsPerGame <= 0.05) pontos += 20;
     if (m.disciplineIndex >= 0.70) pontos += 15;
     if (m.played >= 150) pontos += 10;
-    // penalties
     if (m.goalsPerGame >= 0.05) pontos -= 15;
     if (m.participationPerGame >= 0.10) pontos -= 10;
-    pontos -= 40; // massiva penalidade
+    pontos -= 40; // penalidade massiva
     return Math.max(0, pontos);
   }
 
@@ -434,7 +532,7 @@ public final class HeuristicsEngine {
     if (m.height >= 1.78) pontos += 15;
     if (m.played >= 120) pontos += 15;
     if (m.participationPerGame >= 0.08) pontos -= 15;
-    pontos -= 40; // massiva penalidade
+    pontos -= 40;
     return Math.max(0, pontos);
   }
 
@@ -447,7 +545,7 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // ---------------- Volante ----------------
+  // Volante
   private static double scoreDesVol(Metrics m) {
     double pontos = 0;
     if (m.yellowPerGame >= 0.15) pontos += 35;
@@ -510,8 +608,7 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // ---------------- Meia ----------------
-  // Arm
+  // Meia
   private static double scoreArmMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
     if (m.assistsPerGame >= 0.12) pontos += 40;
@@ -526,7 +623,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Pas
   private static double scorePasMeia(Metrics m) {
     double pontos = 0;
     if (m.assistsPerGame >= 0.10) pontos += 35;
@@ -536,7 +632,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Vel
   private static double scoreVelMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
     if (m.age != null && m.age <= 27) pontos += 30;
@@ -546,7 +641,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Dri
   private static double scoreDriMeia(Metrics m) {
     double pontos = 0;
     if (m.participationPerGame >= 0.20) pontos += 35;
@@ -556,7 +650,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Fin
   private static double scoreFinMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
     if (m.goalsPerGame >= 0.12) pontos += 40;
@@ -567,39 +660,32 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Des (com penalidade)
   private static double scoreDesMeia(Metrics m) {
     double pontos = 0;
-    if (m.yellowPerGame >= 0.10) pontos += 25; // threshold aumentado
+    if (m.yellowPerGame >= 0.10) pontos += 25;
     if (!isMeiaOfensivo(m)) pontos += 20; // meia central
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
       pontos += 25;
     if (m.goalsPerGame <= 0.05) pontos += 10;
-    // penalidade se participativo
     if (m.participationPerGame >= 0.15) pontos -= 20;
     return Math.max(0, pontos);
   }
 
-  // ---------------- Atacante ----------------
-  // Fin
+  // Atacante
   private static double scoreFinAtac(Metrics m) {
     double pontos = 0;
     if (m.goalsPerGame >= 0.30) pontos += 50;
     else if (m.goalsPerGame >= 0.20) pontos += 40;
     else if (m.goalsPerGame >= 0.15) pontos += 30;
     else if (m.goalsPerGame >= 0.10) pontos += 20;
-
-    if (m.goalsPerGame >= 0.19) pontos += 50; // bônus extra
+    if (m.goalsPerGame >= 0.19) pontos += 50;
     else if (m.goalsPerGame >= 0.15) pontos += 35;
-
     if (m.mpg > 0 && m.mpg < 300) pontos += 25;
     else if (m.mpg > 0 && m.mpg < 500) pontos += 15;
-
     if (m.penaltyGoals >= 3) pontos += 10;
     return pontos;
   }
 
-  // Vel
   private static double scoreVelAtac(Metrics m, boolean ponta, boolean centroavante) {
     double pontos = 0;
     if (m.age != null && m.age <= 28) pontos += 35;
@@ -607,12 +693,10 @@ public final class HeuristicsEngine {
     if (m.height <= 1.80) pontos += 20;
     if (m.participationPerGame >= 0.25) pontos += 15;
     if (centroavante && m.age != null && m.age <= 25) pontos += 25;
-    // penalidade se for ponta habilidoso (muitas assistências e baixa altura)
     if (ponta && m.assistsPerGame >= 0.10 && m.height <= 1.78) pontos -= 15;
     return Math.max(0, pontos);
   }
 
-  // Cab
   private static double scoreCabAtac(Metrics m, boolean centroavante) {
     double pontos = 0;
     if (m.height >= 1.85) pontos += 35;
@@ -623,7 +707,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Dri
   private static double scoreDriAtac(Metrics m, boolean ponta, boolean segundo) {
     double pontos = 0;
     if (m.assistsPerGame >= 0.10) pontos += 40;
@@ -636,7 +719,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Pas
   private static double scorePasAtac(Metrics m, boolean segundo) {
     double pontos = 0;
     if (m.assistsPerGame >= 0.12) pontos += 40;
@@ -646,7 +728,6 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  // Res
   private static double scoreResAtac(Metrics m, boolean centroavante) {
     double pontos = 0;
     if (m.minsPerGame >= 85) pontos += 35;
@@ -657,28 +738,198 @@ public final class HeuristicsEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Allowed combinations per position/profile (manual section 8?)
-  // Actually manual lists "Combinações Ideais" for each subposition.
-  // We'll define sets.
+  // Combinações permitidas por perfil de subposição
+  //
+  // Esta é a fonte de verdade para os pares válidos.
+  // Manutenção: ao adicionar/remover pares, atualizar também as tabelas
+  // de design doc correspondentes.
   // -------------------------------------------------------------------------
   private static Set<String> getAllowedCombinations(String posProfile) {
     Set<String> set = new HashSet<>();
     switch (posProfile) {
-      case "GK": set.addAll(List.of("Col/Ref","Ref/Col","Ref/DPe","DPe/Ref","SGo/Ref","Ref/SGo",
-          "Col/DPe","DPe/Col","SGo/DPe","DPe/SGo","SGo/Col","Col/SGo")); break;
-      case "ZAG_NORMAL": set.addAll(List.of("Des/Mar","Mar/Des","Des/Pas","Mar/Pas","Des/Res","Mar/Res")); break;
-      case "ZAG_OFENSIVO": set.addAll(List.of("Mar/Vel","Des/Cab","Cab/Des","Mar/Cab","Cab/Mar")); break;
-      case "LAT_DEF": set.addAll(List.of("Mar/Cru","Cru/Mar","Mar/Fin","Mar/Vel","Vel/Mar","Des/Cru","Cru/Des","Vel/Pas","Pas/Vel")); break;
-      case "LAT_OF": set.addAll(List.of("Cru/Vel","Vel/Cru","Cru/Pas","Vel/Pas","Cru/Fin")); break;
-      case "VOL": set.addAll(List.of("Des/Pas","Mar/Pas","Mar/Res","Des/Res","Des/Mar","Mar/Des","Mar/Fin","Des/Fin","Des/Vel")); break;
-      case "M_CENTRAL": set.addAll(List.of("Pas/Vel","Vel/Pas","Arm/Vel","Arm/Dri","Dri/Pas","Pas/Dri","Des/Vel","Arm/Pas")); break;
-      case "M_OFENSIVO": set.addAll(List.of("Fin/Pas","Arm/Fin","Arm/Pas","Fin/Arm","Dri/Pas","Dri/Fin","Fin/Dri")); break;
-      case "ATAC_REC": set.addAll(List.of("Dri/Pas","Dri/Fin","Pas/Fin")); break;
-      case "ATAC_CA": set.addAll(List.of("Fin/Pas","Fin/Cab","Cab/Fin","Fin/Dri","Fin/Res","Cab/Vel")); break;
-      case "ATAC_PONTA": set.addAll(List.of("Vel/Fin","Fin/Vel","Vel/Dri","Fin/Dri","Dri/Fin")); break;
-      default: break;
+
+      case "GK":
+        set.addAll(List.of(
+            "Col/Ref","Ref/Col","Ref/DPe","DPe/Ref",
+            "SGo/Ref","Ref/SGo","Col/DPe","DPe/Col",
+            "SGo/DPe","DPe/SGo","SGo/Col","Col/SGo"));
+        break;
+
+      case "LAT_DEF":
+        // Lateral Defensivo: foco em Mar/Cru + Des. Vel/Pas aceito para laterais
+        // que ligam o jogo mesmo com perfil mais defensivo.
+        set.addAll(List.of(
+            "Mar/Cru","Cru/Mar","Mar/Fin","Mar/Vel","Vel/Mar",
+            "Des/Cru","Cru/Des","Vel/Pas","Pas/Vel"));
+        break;
+
+      case "LAT_OF":
+        // Lateral Ofensivo: foco em Cru + Vel. Vel/Pas compartilhado com LAT_DEF.
+        set.addAll(List.of(
+            "Cru/Vel","Vel/Cru","Cru/Fin","Cru/Pas","Vel/Pas"));
+        break;
+
+      case "ZAG_NORMAL":
+        // "Mas/Pas" era typo — corrigido para Mar/Pas.
+        set.addAll(List.of(
+            "Des/Mar","Mar/Des","Des/Pas","Mar/Pas","Des/Res","Mar/Res"));
+        break;
+
+      case "ZAG_OFENSIVO":
+        set.addAll(List.of(
+            "Mar/Vel","Des/Cab","Cab/Des","Mar/Cab","Cab/Mar"));
+        break;
+
+      case "VOL":
+        // Todos os 9 pares de Volante confirmados.
+        set.addAll(List.of(
+            "Des/Mar","Mar/Des","Des/Pas","Mar/Pas",
+            "Mar/Res","Mar/Fin","Des/Fin","Des/Vel","Des/Res"));
+        break;
+
+      case "M_CENTRAL":
+        // Pas/Vel e Vel/Pas MIGRADOS para M_ESQUERDA_DIREITA.
+        set.addAll(List.of(
+            "Arm/Vel","Arm/Dri","Dri/Pas","Pas/Dri","Des/Vel","Arm/Pas"));
+        break;
+
+      case "M_ESQUERDA_DIREITA":
+        // NOVO perfil: Meia Esquerda / Meia Direita.
+        // Inclui Pas/Vel e Vel/Pas (migrados de M_CENTRAL).
+        set.addAll(List.of(
+            "Pas/Vel","Vel/Pas","Arm/Vel","Dri/Pas","Pas/Dri","Des/Vel"));
+        break;
+
+      case "M_OFENSIVO":
+        // Dri/Fin REMOVIDO por decisão de design (v5.0).
+        set.addAll(List.of(
+            "Arm/Fin","Arm/Pas","Fin/Pas","Fin/Arm","Dri/Pas","Fin/Dri"));
+        break;
+
+      case "ATAC_REC":
+        // Pas/Fin ADICIONADO. Fin/Pas migrado de ATAC_CA para cá.
+        set.addAll(List.of(
+            "Pas/Fin","Fin/Pas","Dri/Fin","Dri/Pas"));
+        break;
+
+      case "ATAC_CA":
+        // Fin/Pas REMOVIDO — migrado para ATAC_REC.
+        set.addAll(List.of(
+            "Fin/Cab","Cab/Fin","Fin/Dri","Cab/Vel","Fin/Res"));
+        break;
+
+      case "ATAC_PONTA":
+        set.addAll(List.of(
+            "Vel/Fin","Fin/Vel","Vel/Dri","Fin/Dri","Dri/Fin"));
+        break;
+
+      default:
+        break;
     }
     return set;
+  }
+
+  /**
+   * Retorna um pool unificado e deduplicado de pares para um grupo posicional genérico.
+   * Usado quando a subposição não pode ser determinada (posição genérica do Transfermarkt
+   * como "Defensor", "Meio-Campo", etc.) e o jogador não tem estatísticas.
+   */
+  private static Set<String> getGenericGroupPool(int pos) {
+    Set<String> pool = new LinkedHashSet<>();
+    switch (pos) {
+      case 1: // Lateral genérico
+        pool.addAll(getAllowedCombinations("LAT_DEF"));
+        pool.addAll(getAllowedCombinations("LAT_OF"));
+        break;
+      case 2: // Zagueiro genérico
+        pool.addAll(getAllowedCombinations("ZAG_NORMAL"));
+        pool.addAll(getAllowedCombinations("ZAG_OFENSIVO"));
+        break;
+      case 3: // Meio-campo genérico
+        pool.addAll(getAllowedCombinations("VOL"));
+        pool.addAll(getAllowedCombinations("M_CENTRAL"));
+        pool.addAll(getAllowedCombinations("M_ESQUERDA_DIREITA"));
+        pool.addAll(getAllowedCombinations("M_OFENSIVO"));
+        break;
+      case 4: // Atacante genérico
+        pool.addAll(getAllowedCombinations("ATAC_REC"));
+        pool.addAll(getAllowedCombinations("ATAC_CA"));
+        pool.addAll(getAllowedCombinations("ATAC_PONTA"));
+        break;
+      default: // GK (pos==0) não precisa de pool genérico, mas cobre qualquer caso
+        pool.addAll(getAllowedCombinations("GK"));
+        break;
+    }
+    return pool;
+  }
+
+  // -------------------------------------------------------------------------
+  // Detecção de perfil de subposição (separada para reutilização no fallback)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Detecta o perfil de subposição baseado em pos + posText + secundárias + métricas.
+   * Retorna uma string de perfil compatível com getAllowedCombinations().
+   * Chamado tanto para jogadores com stats (scored path) quanto sem stats (fallback path).
+   */
+  /**
+   * Detecta o perfil de subposição baseado em pos + posText + secundárias + métricas.
+   *
+   * Ordem de prioridade:
+   *   1. Categorias genéricas do Transfermarkt ("Defensor", "Meio-Campo", "Atacante")
+   *      → retorna GENERIC_DEF / GENERIC_MID / GENERIC_ATK
+   *   2. Subposições específicas detectadas por tokens no posText
+   *   3. Heurísticas por métricas quando tokens não são conclusivos
+   */
+  private static String detectProfile(Metrics m) {
+
+    // 1. Categoria genérica tem prioridade — deve ser verificada ANTES do routing por pos,
+    //    pois o pos numérico (vindo do PositionUtil) pode ser impreciso para textos genéricos.
+    String generic = detectGenericCategory(m.posText);
+    if (generic != null) return generic;
+
+    int pos = m.pos;
+
+    if (pos == 0) return "GK";
+
+    if (pos == 1) { // Lateral
+      boolean defensivo = isLateralDefensivo(m);
+      boolean ofensivo  = isLateralOfensivo(m);
+      if (defensivo) return "LAT_DEF";
+      if (ofensivo)  return "LAT_OF";
+      // Sem secundária clara: "ala" → ofensivo por padrão; caso contrário, heurística
+      String pLow = m.posText.toLowerCase(Locale.ROOT);
+      if (pLow.contains("ala")) return "LAT_OF";
+      return (m.participationPerGame >= 0.08) ? "LAT_OF" : "LAT_DEF";
+    }
+
+    if (pos == 2) { // Zagueiro
+      return isZagueiroOfensivo(m) ? "ZAG_OFENSIVO" : "ZAG_NORMAL";
+    }
+
+    if (pos == 3) { // Meio-campo
+      // Ordem de prioridade: Volante → Meia Ofensivo → Meia E/D → Meia Central (default)
+      if (isVolante(m))             return "VOL";
+      if (isMeiaOfensivo(m))        return "M_OFENSIVO";
+      if (isMeiaEsquerdaDireita(m)) return "M_ESQUERDA_DIREITA";
+      if (isMeiaCentral(m))         return "M_CENTRAL";
+      return "M_CENTRAL"; // default para meias não classificados
+    }
+
+    if (pos == 4) { // Atacante
+      boolean ca    = isCentroavante(m);
+      boolean ponta = isPonta(m);
+      boolean seg   = isSegundoAtacante(m);
+      if (ca)    return "ATAC_CA";
+      if (ponta) return "ATAC_PONTA";
+      if (seg)   return "ATAC_REC";
+      // Heurística quando nenhum token detectado no posText
+      if (m.goalsPerGame >= 0.20 && m.height >= 1.85) return "ATAC_CA";
+      if (m.assistsPerGame >= 0.08)                    return "ATAC_REC";
+      return "ATAC_PONTA";
+    }
+
+    return "ATAC_CA"; // último recurso (não deveria ocorrer)
   }
 
   // -------------------------------------------------------------------------
@@ -713,146 +964,130 @@ public final class HeuristicsEngine {
         penaltyGoals, minutesPerGoal, minutesPlayed,
         goalsConceded, cleanSheets, idade, heightM);
 
+    // Detecta perfil antecipadamente (usado tanto no fallback quanto no scored path)
+    String profile = detectProfile(m);
+
     if (m.played == 0) {
-      int[] fallback = getFallbackForPosition(pos);
+      // Sem estatísticas: sorteia aleatoriamente do pool da subposição/grupo detectado
+      int[] fallback = getFallbackRandom(profile, pos);
       if (DEBUG) {
-        System.out.println("[DEBUG] No matches played, using fallback: cr1=" +
-                           fallback[0] + " cr2=" + fallback[1] + " for pos=" + pos);
+        System.out.println("[DEBUG] No matches played — random fallback: "
+            + idxToName(fallback[0]) + "/" + idxToName(fallback[1])
+            + " for profile=" + profile);
       }
       return fallback;
     }
 
-    // Determine position profile string for allowed combinations
-    String profile = "";
+    // Posição genérica com stats → resolve para subposição de scoring específica.
+    // O pool de pares permitidos (allowed combinations) também é atualizado para
+    // refletir a subposição resolvida.
+    if (profile.startsWith("GENERIC_")) {
+      if (DEBUG) System.out.println("[DEBUG] Generic profile '" + profile
+          + "' resolved for scoring (pos=" + pos + ")");
+      profile = resolveGenericToScoringProfile(profile, pos, m);
+    }
+
     Map<Integer, Double> scores = new HashMap<>();
 
-    // 1. Compute base scores for each valid characteristic per position
     if (pos == 0) { // Goleiro
-      scores.put(0, scoreCol(m));   // Col
-      scores.put(2, scoreRef(m));   // Ref
-      scores.put(1, scoreDPe(m));   // DPe
-      scores.put(3, scoreSGo(m));   // SGo
-      profile = "GK";
+      scores.put(0, scoreCol(m));
+      scores.put(2, scoreRef(m));
+      scores.put(1, scoreDPe(m));
+      scores.put(3, scoreSGo(m));
     }
     else if (pos == 2) { // Zagueiro
-      boolean ofensivo = isZagueiroOfensivo(m);
       scores.put(7, scoreDesZag(m));
       scores.put(10, scoreMarZag(m));
       scores.put(5, scoreCabZag(m));
       scores.put(13, scoreVelZag(m));
       scores.put(11, scorePasZag(m));
       scores.put(12, scoreResZag(m));
-      profile = ofensivo ? "ZAG_OFENSIVO" : "ZAG_NORMAL";
     }
     else if (pos == 1) { // Lateral
-      boolean defensivo = isLateralDefensivo(m);
-      boolean ofensivo = isLateralOfensivo(m);
-      scores.put(6, scoreCruLat(m));   // Cru
-      scores.put(13, scoreVelLat(m));  // Vel
-      scores.put(11, scorePasLat(m));  // Pas
-      scores.put(10, scoreMarLat(m));  // Mar (penalizado)
-      scores.put(7, scoreDesLat(m));   // Des (penalizado)
-      scores.put(9, scoreFinLat(m));   // Fin
-      // Determine profile string
-      if (defensivo) profile = "LAT_DEF";
-      else if (ofensivo) profile = "LAT_OF";
-      else {
-        // use stats
-        profile = (m.participationPerGame >= 0.08) ? "LAT_OF" : "LAT_DEF";
-      }
+      scores.put(6, scoreCruLat(m));
+      scores.put(13, scoreVelLat(m));
+      scores.put(11, scorePasLat(m));
+      scores.put(10, scoreMarLat(m));
+      scores.put(7, scoreDesLat(m));
+      scores.put(9, scoreFinLat(m));
     }
-    else if (pos == 3) { // Meia (Volante, Meia Central, Meia Ofensivo)
-      boolean defMid = isDefMidLike(m); // volante
-      boolean attMid = isMeiaOfensivo(m);
-      boolean central = isMeiaCentral(m);
-
-      if (defMid) {
+    else if (pos == 3) { // Meia / Volante
+      if (profile.equals("VOL")) {
         scores.put(7, scoreDesVol(m));
         scores.put(10, scoreMarVol(m));
         scores.put(11, scorePasVol(m));
         scores.put(9, scoreFinVol(m));
         scores.put(12, scoreResVol(m));
         scores.put(13, scoreVelVol(m));
-        profile = "VOL";
-      } else if (attMid) {
-        scores.put(4, scoreArmMeia(m, true));  // Arm
-        scores.put(11, scorePasMeia(m));       // Pas
-        scores.put(13, scoreVelMeia(m, true)); // Vel
-        scores.put(8, scoreDriMeia(m));        // Dri
-        scores.put(9, scoreFinMeia(m, true));  // Fin
-        scores.put(7, scoreDesMeia(m));        // Des (penalizado)
-        profile = "M_OFENSIVO";
-      } else { // central
+      } else if (profile.equals("M_OFENSIVO")) {
+        scores.put(4, scoreArmMeia(m, true));
+        scores.put(11, scorePasMeia(m));
+        scores.put(13, scoreVelMeia(m, true));
+        scores.put(8, scoreDriMeia(m));
+        scores.put(9, scoreFinMeia(m, true));
+        scores.put(7, scoreDesMeia(m));
+      } else {
+        // M_CENTRAL, M_ESQUERDA_DIREITA — mesmo pool de scoring; o profile restringe pares válidos
         scores.put(4, scoreArmMeia(m, false));
         scores.put(11, scorePasMeia(m));
         scores.put(13, scoreVelMeia(m, false));
         scores.put(8, scoreDriMeia(m));
         scores.put(9, scoreFinMeia(m, false));
         scores.put(7, scoreDesMeia(m));
-        profile = "M_CENTRAL";
       }
     }
     else if (pos == 4) { // Atacante
-      boolean ca = isCentroavante(m);
-      boolean ponta = isPonta(m);
-      boolean seg = isSegundoAtacante(m);
+      boolean ca    = profile.equals("ATAC_CA");
+      boolean ponta = profile.equals("ATAC_PONTA");
+      boolean seg   = profile.equals("ATAC_REC");
 
-      // Valid characteristics: Fin, Vel, Cab, Dri, Pas, Res
-      scores.put(9, scoreFinAtac(m));
+      scores.put(9,  scoreFinAtac(m));
       scores.put(13, scoreVelAtac(m, ponta, ca));
-      scores.put(5, scoreCabAtac(m, ca));
-      scores.put(8, scoreDriAtac(m, ponta, seg));
+      scores.put(5,  scoreCabAtac(m, ca));
+      scores.put(8,  scoreDriAtac(m, ponta, seg));
       scores.put(11, scorePasAtac(m, seg));
       scores.put(12, scoreResAtac(m, ca));
-
-      if (ca) profile = "ATAC_CA";
-      else if (ponta) profile = "ATAC_PONTA";
-      else if (seg) profile = "ATAC_REC";
-      else {
-        // fallback: use stats
-        if (m.goalsPerGame >= 0.20 && m.height >= 1.85) profile = "ATAC_CA";
-        else if (m.assistsPerGame >= 0.08) profile = "ATAC_REC";
-        else profile = "ATAC_PONTA";
-      }
     }
 
-    // Apply global adjustments (veteran, young, low games)
+    // Ajustes globais (veterano, jovem, biotipo)
     applyGlobalAdjustments(scores, m);
 
-    // Sort characteristics by score descending
+    // Ordena scores de forma decrescente
     List<Map.Entry<Integer, Double>> sorted = scores.entrySet().stream()
         .sorted(Map.Entry.<Integer, Double>comparingByValue().reversed())
         .collect(Collectors.toList());
 
     if (DEBUG) {
-      System.out.println("[DEBUG] Scores for " + m.posText + ": " + sorted);
+      System.out.println("[DEBUG] Scores for " + m.posText + " [" + profile + "]: " + sorted);
     }
 
-    // Select top two
     if (sorted.size() < 2) {
-      // Should not happen, but fallback
-      return getFallbackForPosition(pos);
+      return getFallbackRandom(profile, pos);
     }
 
-    int first = sorted.get(0).getKey();
+    int first  = sorted.get(0).getKey();
     int second = sorted.get(1).getKey();
 
-    // Validate against allowed combinations
+    // Valida contra a lista de pares permitidos para o perfil
     Set<String> allowed = getAllowedCombinations(profile);
     String pair1 = idxToName(first) + "/" + idxToName(second);
     String pair2 = idxToName(second) + "/" + idxToName(first);
 
     if (allowed.contains(pair1) || allowed.contains(pair2)) {
-      // Accept, keep order as scored
       if (DEBUG) System.out.println("[DEBUG] Selected pair: " + pair1 + " (allowed)");
     } else {
-      // Need to find the best allowed pair among top characteristics
-      // Try top 5 to find any allowed pair
-      List<Integer> topCandidates = sorted.stream().limit(5).map(Map.Entry::getKey).collect(Collectors.toList());
+      // Busca o melhor par permitido dentre os top-5 candidatos por score
+      List<Integer> topCandidates = sorted.stream()
+          .limit(5)
+          .map(Map.Entry::getKey)
+          .collect(Collectors.toList());
+
       double bestScore = -1;
       int bestA = first, bestB = second;
+      boolean foundAllowed = false;
+
       for (int i = 0; i < topCandidates.size(); i++) {
-        for (int j = i+1; j < topCandidates.size(); j++) {
+        for (int j = i + 1; j < topCandidates.size(); j++) {
           int a = topCandidates.get(i);
           int b = topCandidates.get(j);
           String p1 = idxToName(a) + "/" + idxToName(b);
@@ -863,17 +1098,21 @@ public final class HeuristicsEngine {
               bestScore = scoreSum;
               bestA = a;
               bestB = b;
+              foundAllowed = true;
             }
           }
         }
       }
-      if (bestScore >= 0) {
-        first = bestA;
+
+      if (foundAllowed) {
+        first  = bestA;
         second = bestB;
-        if (DEBUG) System.out.println("[DEBUG] Adjusted to allowed pair: " + idxToName(first) + "/" + idxToName(second));
+        if (DEBUG) System.out.println("[DEBUG] Adjusted to best allowed pair: "
+            + idxToName(first) + "/" + idxToName(second));
       } else {
-        // No allowed pair found among top 5, just use top two
-        if (DEBUG) System.out.println("[DEBUG] No allowed pair found, using top two: " + pair1);
+        // Nenhum par nos top-5 está no allowed list — usa fallback aleatório do perfil
+        if (DEBUG) System.out.println("[DEBUG] No allowed pair in top-5; using random fallback for " + profile);
+        return getFallbackRandom(profile, pos);
       }
     }
 
@@ -900,21 +1139,97 @@ public final class HeuristicsEngine {
     }
   }
 
-  // Fallback if something goes wrong
-  private static int[] getFallbackForPosition(int pos) {
-    switch (pos) {
-      case 0: return new int[] {0, 2}; // Col/Ref
-      case 1: return new int[] {6, 13}; // Cru/Vel (ofensivo default)
-      case 2: return new int[] {10, 7}; // Mar/Des
-      case 3: return new int[] {4, 11}; // Arm/Pas
-      case 4: return new int[] {9, 8}; // Fin/Dri
-      default: return new int[] {11, 13}; // Pas/Vel
+  // -------------------------------------------------------------------------
+  // Fallback aleatório baseado no pool de pares da subposição
+  // -------------------------------------------------------------------------
+
+  /**
+   * Sorteia aleatoriamente um par do pool de pares para o perfil dado.
+   *
+   * Casos tratados:
+   *   GENERIC_DEF → pool unificado de LAT_DEF + LAT_OF + ZAG_NORMAL + ZAG_OFENSIVO
+   *   GENERIC_MID → pool unificado de VOL + M_CENTRAL + M_ESQUERDA_DIREITA + M_OFENSIVO
+   *   GENERIC_ATK → pool unificado de ATAC_REC + ATAC_CA + ATAC_PONTA
+   *   Perfil específico → pool da subposição exata
+   *   Perfil desconhecido → pool genérico do grupo por pos
+   */
+  private static int[] getFallbackRandom(String profile, int pos) {
+    Set<String> pool;
+
+    // Posições genéricas do Transfermarkt: sorteia de todo o pool do grupo
+    if ("GENERIC_DEF".equals(profile)) {
+      pool = new LinkedHashSet<>();
+      pool.addAll(getAllowedCombinations("LAT_DEF"));
+      pool.addAll(getAllowedCombinations("LAT_OF"));
+      pool.addAll(getAllowedCombinations("ZAG_NORMAL"));
+      pool.addAll(getAllowedCombinations("ZAG_OFENSIVO"));
+      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_DEF → pool=" + pool.size() + " pares");
+    } else if ("GENERIC_MID".equals(profile)) {
+      pool = getGenericGroupPool(3);
+      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_MID → pool=" + pool.size() + " pares");
+    } else if ("GENERIC_ATK".equals(profile)) {
+      pool = getGenericGroupPool(4);
+      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_ATK → pool=" + pool.size() + " pares");
+    } else {
+      // Perfil específico conhecido
+      pool = getAllowedCombinations(profile);
+      // Perfil desconhecido ou vazio → usa pool genérico do grupo por pos
+      if (pool.isEmpty()) {
+        pool = getGenericGroupPool(pos);
+        if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: profile='" + profile
+            + "' vazio → usando getGenericGroupPool(pos=" + pos + ")");
+      }
     }
+
+    // Último recurso absoluto (não deveria acontecer)
+    if (pool.isEmpty()) {
+      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: pool vazio após todos os fallbacks, retornando Pas/Vel");
+      return new int[]{11, 13};
+    }
+
+    List<String> list = new ArrayList<>(pool);
+    Collections.shuffle(list, new Random());
+    int[] pair = parseCharPair(list.get(0));
+
+    if (DEBUG) System.out.println("[DEBUG] getFallbackRandom [" + profile + "]: sorteou " + list.get(0));
+    return new int[]{pair[0], pair[1]};
   }
 
-  // Helper for meia detection (copied from previous code)
-  private static boolean isDefMidLike(Metrics m) {
-    final String p = m.posText.toLowerCase(Locale.ROOT);
-    return m.pos == 3 && (p.contains("volante") || m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")));
+  /**
+   * Converte a string "Arm/Vel" em int[]{4, 13}.
+   * Usa nameToIdx para cada parte; retorna {Pas, Vel} em caso de erro de parsing.
+   */
+  private static int[] parseCharPair(String pair) {
+    if (pair == null || !pair.contains("/")) return new int[]{11, 13};
+    String[] parts = pair.split("/", 2);
+    int a = nameToIdx(parts[0].trim());
+    int b = nameToIdx(parts[1].trim());
+    return new int[]{a, b};
+  }
+
+  /**
+   * Inverso de idxToName — converte nome de característica em índice numérico.
+   * Retorna 11 (Pas) como fallback seguro para nomes não reconhecidos.
+   */
+  private static int nameToIdx(String name) {
+    switch (name) {
+      case "Col": return 0;
+      case "DPe": return 1;
+      case "Ref": return 2;
+      case "SGo": return 3;
+      case "Arm": return 4;
+      case "Cab": return 5;
+      case "Cru": return 6;
+      case "Des": return 7;
+      case "Dri": return 8;
+      case "Fin": return 9;
+      case "Mar": return 10;
+      case "Pas": return 11;
+      case "Res": return 12;
+      case "Vel": return 13;
+      default:
+        if (DEBUG) System.out.println("[DEBUG] nameToIdx: nome desconhecido='" + name + "', retornando Pas(11)");
+        return 11;
+    }
   }
 }
