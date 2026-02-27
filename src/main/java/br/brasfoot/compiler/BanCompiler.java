@@ -434,6 +434,22 @@ public final class BanCompiler {
       );
     }
 
+    // top2[2] = resolvedPos calculado pelo HeuristicsEngine.
+    // Para posições específicas, resolvedPos == pos (sem efeito prático).
+    // Para posições genéricas ("Defensor", "Meio-Campo", etc.), pode diferir:
+    // ex.: "Defensor" que sorteia perfil LAT_OF recebe resolvedPos=1 (Lateral),
+    // garantindo que a posição no .ban esteja alinhada com a característica.
+    // A sobrescrita só ocorre quando há diferença real, evitando setAnyField
+    // desnecessário e deixando explícito que mudança de posição é caso excepcional.
+    int resolvedPos = (top2.length >= 3) ? top2[2] : pos;
+    if (resolvedPos != pos) {
+      if (DEBUG) {
+        System.out.println("[DEBUG] Posição ajustada para " + nome
+            + ": pos original=" + pos + " → resolvedPos=" + resolvedPos
+            + " (posição genérica resolvida por característica sorteada)");
+      }
+      setAnyField(p, resolvedPos, "e", "posicao");
+    }
     setAnyField(p, top2[0], "g", "cr1");
     setAnyField(p, top2[1], "h", "cr2");
 
