@@ -67,34 +67,89 @@ public final class PositionUtil {
   }
 
   /**
-   * IMPORTANTE:
-   * Ajustado para o código REAL que o Brasfoot espera (pela inversão observada no jogo):
-   * 0=Goleiro, 1=Lateral, 2=Zagueiro, 3=Meia, 4=Atacante
+   * Mapeia o posText para o número de posição do Brasfoot:
+   *   0 = Goleiro
+   *   1 = Lateral
+   *   2 = Zagueiro
+   *   3 = Meia
+   *   4 = Atacante
+   *
+   * ATENÇÃO: a verificação de posições GENÉRICAS do Transfermarkt
+   * ("Defensor", "Meio-Campo", "Forward", etc.) deve ocorrer ANTES
+   * do fallback final, para evitar que um Defensor seja classificado
+   * como Atacante dentro do Brasfoot.
    */
   public static int mapPositionFromMapping(String posText) {
     String t = normalize(posText);
 
-    // GOLEIRO
-    if (t.contains("gole")) return 0;
+    // ── GOLEIRO ──────────────────────────────────────────────────────────────
+    if (t.contains("gole") || t.contains("goalkeeper") || t.contains("torwart")) return 0;
 
-    // DEFESA
-    if (t.contains("zague")) return 2;
+    // ── ZAGUEIRO (subposição específica) ─────────────────────────────────────
+    if (t.contains("zague")
+        || t.contains("innenverteidiger")
+        || t.equals("cb")) return 2;
 
-    // LATERAIS
-    // cobre "lateral dir", "lateral esq", "ala", etc.
-    if (t.contains("lateral") || t.contains("ala")) return 1;
+    // ── LATERAL (subposição específica) ──────────────────────────────────────
+    // Cobre "lateral dir", "lateral esq", "ala", "outside back", etc.
+    if (t.contains("lateral")
+        || t.contains("ala")
+        || t.contains("außenverteidiger")
+        || t.contains("wing back")) return 1;
 
-    // MEIO CAMPO
+    // ── MEIO-CAMPO (subposições específicas) ─────────────────────────────────
     if (t.contains("volante")) return 3;
-    if (t.contains("meia")) return 3;
+    if (t.contains("meia"))    return 3;
 
-    // ATAQUE
-    if (t.contains("ponta")) return 4;
-    if (t.contains("centroavante")) return 4;
+    // ── ATAQUE (subposições específicas) ─────────────────────────────────────
+    if (t.contains("ponta"))         return 4;
+    if (t.contains("centroavante"))  return 4;
+    if (t.contains("mittelstürmer")) return 4;
+    if (t.contains("centre-forward")) return 4;
     if (t.contains("seg") && t.contains("atac")) return 4;
-    if (t.contains("atac")) return 4;
+    if (t.contains("atac"))          return 4;
 
-    // fallback
+    // =========================================================================
+    // Posições GENÉRICAS do Transfermarkt (sem subposição especificada).
+    //
+    // Essas verificações DEVEM vir antes do fallback final (return 4) para
+    // evitar que "Defensor" e "Meio-Campo" sejam tratados como Atacantes.
+    //
+    // Critério de mapeamento para o Brasfoot:
+    //   "Defensor" / "Defender"   → 2 (Zagueiro) — default conservador para defesa
+    //   "Meio-Campo" / "Midfield" → 3 (Meia)
+    //   "Atacante" / "Forward"    → 4 (Atacante)  — já seria coberto pelo fallback,
+    //                                                mas deixamos explícito
+    // =========================================================================
+
+    // Defensor genérico
+    // Tokens: "defensor", "defensores", "defender", "defenders", "abwehr", "verteidiger"
+    // Rejeita compostos já tratados acima ("innenverteidiger", "außenverteidiger")
+    if (t.equals("defensor")
+        || t.equals("defensores")
+        || t.equals("defender")
+        || t.equals("defenders")
+        || t.equals("abwehr")
+        || t.equals("verteidiger")) return 2;
+
+    // Meio-campo genérico
+    // Tokens: "meio-campo", "meio campo", "midfield", "mittelfeld"
+    // Nota: "meio-campo" NÃO contém "meia", então sem esta verificação cai no fallback 4!
+    if (t.equals("meio-campo")
+        || t.equals("meio campo")
+        || t.equals("midfield")
+        || t.equals("mittelfeld")) return 3;
+
+    // Atacante genérico — explícito para clareza
+    // Tokens: "forward", "forwards", "stürmer", "sturmer"
+    if (t.equals("forward")
+        || t.equals("forwards")
+        || t.equals("stürmer")
+        || t.equals("sturmer")) return 4;
+
+    // ── Fallback final ───────────────────────────────────────────────────────
+    // Qualquer texto não reconhecido. Mantido como 4 por compatibilidade histórica,
+    // mas idealmente nunca deve ser atingido para posições válidas do Transfermarkt.
     return 4;
   }
 
