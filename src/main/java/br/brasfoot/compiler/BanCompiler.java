@@ -67,6 +67,13 @@ public final class BanCompiler {
     final int MAX_JUNIORES = 20;
     final int TITULARES_JUNIORES = 7;
 
+    // ── Resolução adiada de lado ──────────────────────────────────────────────
+    // Jogadores com lado ambíguo têm o side definido APÓS processar todo o elenco.
+    // allBuiltPlayers: todos os jogadores construídos (seniors + juniores), na ordem.
+    // deferredSideEntries: [índice em allBuiltPlayers, tipo: 1=ambidestro, 2=sem-pé]
+    ArrayList<Object> allBuiltPlayers     = new ArrayList<>();
+    ArrayList<int[]>  deferredSideEntries = new ArrayList<>();
+
     // Primeiro passo: verifica se ALGUM jogador do elenco tem minutesPlayedSeason.
     // Se sim, estamos num JSON novo — jogadores sem o campo realmente não jogaram na
     // temporada (minutesPlayedSeason = 0). Se NENHUM tem o campo, é um JSON antigo e
@@ -92,7 +99,36 @@ public final class BanCompiler {
         String category = JsonUtil.getString(pj, "category");
         boolean isJunior = "junior".equalsIgnoreCase(category);
 
+        // ── Verificação de lado adiado ANTES de construir o jogador ──────────
+        // Analisa foot + texto da posição diretamente para decidir se o lado é
+        // resolvido agora ou adiado (pós-elenco). Não usamos pi.sideHint para
+        // evitar falsos positivos em posições neutras (ex: "Atacante", "Zagueiro").
+        // Tipos: 0=normal, 1=ambidestro-sem-hint (balanço do elenco), 2=sem-pé-sem-hint (50/50)
+        String footCheck = JsonUtil.getString(pj, "foot");
+        String posTextCheck;
+        {
+          PositionUtil.PosInfo piTmp = PositionUtil.readPosInfo(pj);
+          posTextCheck = piTmp.bestText();
+        }
+        int sideDeferType = getSideDeferralType(footCheck, posTextCheck);
+
         e.g p = buildPlayerFromJson(pj, team, countryIdOverride);
+
+        // ── Rastreia jogador para resolução de lado adiado ────────────────────
+        int playerGlobalIdx = allBuiltPlayers.size();
+        allBuiltPlayers.add(p);
+        if (sideDeferType > 0) {
+          // Lado será sobrescrito no bloco pós-loop; -1 é sentinela interna
+          setAnyField(p, -1, "i", "lado");
+          deferredSideEntries.add(new int[]{playerGlobalIdx, sideDeferType});
+          if (DEBUG) {
+            Object nomeP = getAnyField(p, "a");
+            System.out.println("[DEBUG] lado-adiado: " + nomeP
+                + " foot=" + footCheck
+                + " posText=" + posTextCheck
+                + " deferType=" + (sideDeferType == 1 ? "ambidestro" : "sem-pe"));
+          }
+        }
 
         if (isJunior) {
           // Juniores não participam do cálculo de titulares seniors.
@@ -124,6 +160,51 @@ public final class BanCompiler {
           }
           minutesByIndex.add(new int[]{jogadores.size(), minsParaOrdem});
           jogadores.add(p);
+        }
+      }
+    }
+
+    // ── Resolução adiada de lado (pós-loop) ───────────────────────────────────
+    // Conta quantos jogadores com lado DEFINITIVO estão no elenco (senior + junior).
+    // Brasfoot: 0=Direito, 1=Esquerdo.
+    if (!deferredSideEntries.isEmpty()) {
+      java.util.Set<Integer> deferredIndices = new java.util.HashSet<>();
+      for (int[] d : deferredSideEntries) deferredIndices.add(d[0]);
+
+      int leftCount  = 0;
+      int rightCount = 0;
+      for (int idx = 0; idx < allBuiltPlayers.size(); idx++) {
+        if (deferredIndices.contains(idx)) continue; // pula adiados
+        Object sideVal = getAnyField(allBuiltPlayers.get(idx), "i", "lado");
+        if (sideVal instanceof Number) {
+          if (((Number) sideVal).intValue() == 1) leftCount++;
+          else rightCount++;
+        }
+      }
+
+      if (DEBUG) System.out.println("[DEBUG] lado-adiado: esq=" + leftCount + " dir=" + rightCount);
+
+      java.util.Random rndSide = new java.util.Random();
+      for (int[] d : deferredSideEntries) {
+        Object pl = allBuiltPlayers.get(d[0]);
+        int side;
+        if (d[1] == 1) {
+          // Ambidestro sem hint posicional: vai para o lado menos representado no elenco.
+          // Empate → Esquerdo (1). Atualiza contadores para que múltiplos ambidestros
+          // sejam distribuídos de forma equilibrada entre si.
+          side = (leftCount <= rightCount) ? 1 : 0;
+          if (side == 1) leftCount++; else rightCount++;
+        } else {
+          // Sem pé e sem hint posicional: sorteio 50/50
+          side = rndSide.nextBoolean() ? 1 : 0;
+        }
+        setAnyField(pl, side, "i", "lado");
+        if (DEBUG) {
+          Object nomeP = getAnyField(pl, "a");
+          System.out.println("[DEBUG] lado-adiado-resolvido: " + nomeP
+              + " tipo=" + (d[1] == 1 ? "ambidestro" : "sem-pe")
+              + " lado=" + (side == 1 ? "Esquerdo(1)" : "Direito(0)")
+              + " esq=" + leftCount + " dir=" + rightCount);
         }
       }
     }
@@ -474,6 +555,74 @@ public final class BanCompiler {
     }
 
     return p;
+  }
+
+  // -------------------------
+  // Side deferral helpers
+  // -------------------------
+
+  /**
+   * Determina se o lado do jogador deve ser resolvido de forma adiada (após processar
+   * todo o elenco), analisando diretamente o texto da posição — sem usar pi.sideHint,
+   * que pode retornar valor não-nulo mesmo para posições que não implicam lado.
+   *
+   * <p>Tipos de retorno:
+   * <ul>
+   *   <li>0 (normal)  – pé definido (esq/dir) OU posição implica lado → SideResolver decide.</li>
+   *   <li>1 (ambidestro-sem-hint) – foot=ambidestro E posição sem dica de lado →
+   *       vai para o lado com menos jogadores no elenco.</li>
+   *   <li>2 (sem-pé-sem-hint) – foot ausente/desconhecido E posição sem dica de lado →
+   *       sorteio 50/50.</li>
+   * </ul>
+   */
+  private static int getSideDeferralType(String foot, String posText) {
+    if (positionImpliesSide(posText)) return 0; // posição indica lado → SideResolver resolve
+
+    // Posição neutra: analisa o pé
+    if (foot == null || foot.isBlank()) return 2; // sem pé e sem hint
+
+    String f = foot.trim().toLowerCase(java.util.Locale.ROOT);
+    if (f.equals("ambidestro") || f.equals("both") || f.equals("ambidextrous")) return 1;
+    if (f.equals("direito") || f.equals("right")
+        || f.equals("esquerdo") || f.equals("left")) return 0;
+
+    // Valores não reconhecidos ("unknown", "-", etc.) → trata como sem pé
+    return 2;
+  }
+
+  /**
+   * Retorna true se o texto de posição indicar explicitamente um lado (esquerdo ou direito).
+   * Analisa o texto normalizado (sem acentos, minúsculas) procurando por termos que
+   * implicam lado — ex: "lateral esq", "ponta dir", "lw", "rw".
+   * Posições neutras como "Atacante", "Zagueiro", "Volante" retornam false.
+   */
+  private static boolean positionImpliesSide(String posText) {
+    if (posText == null || posText.isBlank()) return false;
+
+    // Normaliza: remove acentos usando Character category (sem regex)
+    String norm = java.text.Normalizer.normalize(posText, java.text.Normalizer.Form.NFD);
+    StringBuilder sb = new StringBuilder();
+    for (char c : norm.toCharArray()) {
+      int type = Character.getType(c);
+      if (type != Character.NON_SPACING_MARK
+          && type != Character.COMBINING_SPACING_MARK
+          && type != Character.ENCLOSING_MARK) {
+        sb.append(c);
+      }
+    }
+    String p = sb.toString().toLowerCase(java.util.Locale.ROOT);
+
+    if (p.contains("lateral esq") || p.contains("lateral dir")) return true;
+    if (p.contains("ponta esq")   || p.contains("ponta dir"))   return true;
+    if (p.contains("left wing")   || p.contains("right wing"))  return true;
+    if (p.contains("meia esq")    || p.contains("meia dir"))    return true;
+    if (p.contains("ala esq")     || p.contains("ala dir"))     return true;
+    if (p.contains("extremo esq") || p.contains("extremo dir")) return true;
+    // Winger abreviado como token isolado
+    if (p.equals("lw") || p.equals("rw"))           return true;
+    if (p.startsWith("lw ") || p.startsWith("rw ")) return true;
+    if (p.endsWith(" lw") || p.endsWith(" rw"))     return true;
+    return false;
   }
 
   // -------------------------
