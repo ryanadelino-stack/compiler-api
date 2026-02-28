@@ -128,6 +128,21 @@ public final class BanCompiler {
                 + " posText=" + posTextCheck
                 + " deferType=" + (sideDeferType == 1 ? "ambidestro" : "sem-pe"));
           }
+        } else if (!positionImpliesSide(posTextCheck) && isExplicitFoot(footCheck)) {
+          // ── Pé explícito + posição neutra: mapeia diretamente, ignora SideResolver ─
+          // O SideResolver pode aplicar lógica de "winger" (pé direito → lado esquerdo
+          // para cortar para dentro), o que é INCORRETO para posições neutras como
+          // Centroavante, Zagueiro, Meia Central, etc.
+          // Regra direta: direito → 0 (Direito), esquerdo → 1 (Esquerdo).
+          int sideFromFoot = resolveExplicitFootSide(footCheck);
+          setAnyField(p, sideFromFoot, "i", "lado");
+          if (DEBUG) {
+            Object nomeP = getAnyField(p, "a");
+            System.out.println("[DEBUG] lado-direto-do-pe: " + nomeP
+                + " foot=" + footCheck
+                + " posText=" + posTextCheck
+                + " lado=" + (sideFromFoot == 1 ? "Esquerdo(1)" : "Direito(0)"));
+          }
         }
 
         if (isJunior) {
@@ -588,6 +603,27 @@ public final class BanCompiler {
 
     // Valores não reconhecidos ("unknown", "-", etc.) → trata como sem pé
     return 2;
+  }
+
+  /**
+   * Retorna true se o foot for um valor explícito reconhecido (direito ou esquerdo),
+   * excluindo ambidestro e valores nulos/desconhecidos.
+   */
+  private static boolean isExplicitFoot(String foot) {
+    if (foot == null || foot.isBlank()) return false;
+    String f = foot.trim().toLowerCase(java.util.Locale.ROOT);
+    return f.equals("direito") || f.equals("right")
+        || f.equals("esquerdo") || f.equals("left");
+  }
+
+  /**
+   * Mapeia pé explícito diretamente para o lado do Brasfoot.
+   * Regra: pé direito → 0 (Direito), pé esquerdo → 1 (Esquerdo).
+   * Só deve ser chamado quando isExplicitFoot() retornar true.
+   */
+  private static int resolveExplicitFootSide(String foot) {
+    String f = (foot == null) ? "" : foot.trim().toLowerCase(java.util.Locale.ROOT);
+    return (f.equals("esquerdo") || f.equals("left")) ? 1 : 0;
   }
 
   /**
