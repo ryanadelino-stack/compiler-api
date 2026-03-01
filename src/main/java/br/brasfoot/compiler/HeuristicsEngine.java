@@ -415,8 +415,14 @@ public final class HeuristicsEngine {
     if (m.yellowPerGame >= 0.15) pontos += 35;
     else if (m.yellowPerGame >= 0.10) pontos += 25;
     if (m.disciplineIndex >= 0.70) pontos += 20;
-    if (m.height >= 1.85) pontos += 15;
+    // Ajustado: muito alto (>=1.88) recebe mais; moderadamente alto (>=1.85) recebe menos.
+    if (m.height >= 1.88) pontos += 22;
+    else if (m.height >= 1.85) pontos += 12;
     if (m.played >= 150) pontos += 10;
+    // Bônus combo: zagueiro alto E agressivo — arquétipo Des/Cab (vai ao duelo aéreo
+    // e comete faltas). Des precisa superar Mar para que Des/Cab apareça naturalmente
+    // em ZAG_OFENSIVO em vez de sempre Mar/Cab.
+    if (m.height >= 1.86 && m.yellowPerGame >= 0.15) pontos += 20;
     return pontos;
   }
 
@@ -567,13 +573,21 @@ public final class HeuristicsEngine {
   }
 
   private static double scorePasVol(Metrics m) {
-    // Pas é principal indicador de volante distribuidor — Des/Pas e Mar/Pas devem
-    // aparecer com frequência para volantes com boa participação ofensiva.
+    // Pas é o indicador principal do volante distribuidor.
+    // Des/Pas e Mar/Pas devem aparecer para dois perfis distintos:
+    //   1. Volante com número considerável de assistências (apg >= 0.06) — mesmo
+    //      sem muitos gols, a criação de jogo justifica o par.
+    //   2. Volante com alta participação geral (ppg elevado) — complemento do (1).
     double pontos = 0;
     if (m.assistsPerGame >= 0.08) pontos += 55;
     else if (m.assistsPerGame >= 0.05) pontos += 42;
     else if (m.assistsPerGame >= 0.03) pontos += 30;
-    // Participação (gols+assistências) reforça o perfil distribuidor
+    // Bônus direto por assistências consideráveis — independente de gols.
+    // Garante que Des/Pas e Mar/Pas apareçam para volantes criadores mesmo
+    // quando goalsPerGame é zero ou baixo.
+    if (m.assistsPerGame >= 0.06) pontos += 20;
+    else if (m.assistsPerGame >= 0.04) pontos += 12;
+    // Participação reforça (mas não substitui assists como critério primário)
     if (m.participationPerGame >= 0.15) pontos += 30;
     else if (m.participationPerGame >= 0.10) pontos += 20;
     else if (m.participationPerGame >= 0.07) pontos += 12;
@@ -614,11 +628,16 @@ public final class HeuristicsEngine {
 
   private static double scoreVelVol(Metrics m) {
     double pontos = 0;
-    if (m.age != null && m.age <= 27) pontos += 30;
+    // Threshold mais rigoroso: apenas volantes muito jovens (<=25) recebem bônus máximo.
+    // Entre 26-27 o bônus cai pela metade, evitando que Des/Vel apareça por padrão
+    // em qualquer jovem com participação razoável.
+    if (m.age != null && m.age <= 25) pontos += 30;
+    else if (m.age != null && m.age <= 27) pontos += 15;
     if (m.participationPerGame >= 0.10) pontos += 25;
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia")))
       pontos += 20;
-    if (m.height <= 1.80) pontos += 15;
+    // REMOVIDO: bônus de altura (height <= 1.80 não é indicador de Vel num volante —
+    // qualquer mediano tem <=1.80, tornava Vel dominante de forma automática).
     return pontos;
   }
 
@@ -686,7 +705,7 @@ public final class HeuristicsEngine {
   }
 
   // Atacante
-  private static double scoreFinAtac(Metrics m) {
+  private static double scoreFinAtac(Metrics m, boolean ponta) {
     double pontos = 0;
     if (m.goalsPerGame >= 0.30) pontos += 50;
     else if (m.goalsPerGame >= 0.20) pontos += 40;
@@ -697,6 +716,9 @@ public final class HeuristicsEngine {
     if (m.mpg > 0 && m.mpg < 300) pontos += 25;
     else if (m.mpg > 0 && m.mpg < 500) pontos += 15;
     if (m.penaltyGoals >= 3) pontos += 10;
+    // Bônus de contexto: pontas com taxa de gol real merecem Fin competindo com Vel.
+    // Sem esse bônus, Fin/Vel nunca aparecia porque Vel + bônus-ponta + idade dominavam.
+    if (ponta && m.goalsPerGame >= 0.10) pontos += 30;
     return pontos;
   }
 
@@ -727,10 +749,18 @@ public final class HeuristicsEngine {
     else if (m.assistsPerGame >= 0.08) pontos += 30;
     if (m.age != null && m.age <= 27) pontos += 25;
     if (m.height <= 1.78) pontos += 25;
-    if (ponta || segundo) pontos += 20;
+    // Segundo atacante mantém bônus flat — Dri é característica central do perfil.
+    // Ponta REMOVIDO do bônus flat: era responsável pela dominância de Vel/Dri em
+    // pontas com qualquer perfil, impedindo Fin/Vel de aparecer.
+    if (segundo) pontos += 20;
+    // Ponta dribbladora com muita assistência ainda recebe bônus, mas menor e condicional.
+    if (ponta && m.assistsPerGame >= 0.12) pontos += 15;
     if (ponta && m.participationPerGame >= 0.25) pontos += 30;
     if (m.goalsPerGame >= 0.15 && m.assistsPerGame >= 0.08) pontos += 25;
-    return pontos;
+    // Penalty: pontas com taxa de gol relevante devem ter Fin, não Dri.
+    // Isso garante que Fin/Vel apareça para pontas goleadoras (gpg >= 0.10).
+    if (ponta && m.goalsPerGame >= 0.10) pontos -= 25;
+    return Math.max(0, pontos);
   }
 
   private static double scorePasAtac(Metrics m, boolean segundo) {
@@ -1060,7 +1090,7 @@ public final class HeuristicsEngine {
       boolean ponta = profile.equals("ATAC_PONTA");
       boolean seg   = profile.equals("ATAC_REC");
 
-      scores.put(9,  scoreFinAtac(m));
+      scores.put(9,  scoreFinAtac(m, ponta));
       scores.put(13, scoreVelAtac(m, ponta, ca));
       scores.put(5,  scoreCabAtac(m, ca));
       scores.put(8,  scoreDriAtac(m, ponta, seg));
