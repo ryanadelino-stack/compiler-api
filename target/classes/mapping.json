@@ -57,7 +57,7 @@
     { "id": 24, "nome": "Bermudas", "aliases": ["Bermuda"] },
     { "id": 25, "nome": "Belarus", "aliases": ["Bielorrússia", "Bielorrussia", "Belarussia"] },
     { "id": 26, "nome": "Bolívia", "aliases": ["Bolivia"] },
-    { "id": 27, "nome": "Bósnia", "aliases": ["Bosnia", "Bósnia e Herzegovina", "Bosnia e Herzegovina", "Bosnia and Herzegovina"] },
+    { "id": 27, "nome": "Bósnia", "aliases": ["Bosnia", "Bósnia e Herzegovina", "Bosnia e Herzegovina", "Bósnia-Herzegovina", "Bosnia and Herzegovina"] },
     { "id": 28, "nome": "Botsuana", "aliases": ["Botswana"] },
     { "id": 29, "nome": "Brasil", "aliases": ["Brazil"] },
     { "id": 30, "nome": "Brunei" },
