@@ -273,7 +273,7 @@
     { "id": 202, "nome": "Comores", "aliases": ["Comoros"] },
     { "id": 203, "nome": "Micronésia", "aliases": ["Micronesia"] },
     { "id": 204, "nome": "Ilhas Marshall", "aliases": ["Marshall Islands"] },
-    { "id": 205, "nome": "Maurícia", "aliases": ["Mauritius"] },
+    { "id": 205, "nome": "Maurícia", "aliases": ["Mauritius", "Maurícias", "Ilhas Maurícias"] },
     { "id": 206, "nome": "Nauru" },
     { "id": 207, "nome": "Palau" },
     { "id": 208, "nome": "Kiribati" },
