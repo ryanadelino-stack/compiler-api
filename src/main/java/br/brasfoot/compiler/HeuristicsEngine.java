@@ -559,6 +559,11 @@ public final class HeuristicsEngine {
     if (m.disciplineIndex >= 0.70) pontos += 20;
     if (m.goalsPerGame <= 0.05) pontos += 15;
     if (m.played >= 150) pontos += 10;
+    // Bônus distribuidor: volante destruidor que também assiste bem tem perfil
+    // Des/Pas — o "destroyer-playmaker". Sem este bônus, Mar sempre vencia Des
+    // por causa dos bônus de regularidade/disciplina em scoreMarVol (v5.1).
+    if (m.assistsPerGame >= 0.06) pontos += 30;
+    else if (m.assistsPerGame >= 0.04) pontos += 15;
     return pontos;
   }
 
@@ -653,7 +658,10 @@ public final class HeuristicsEngine {
       if (m.participationPerGame >= 0.25) pontos += 20;
       if (m.assistsPerGame >= 0.10) pontos += 20;
     }
-    return pontos;
+    // Meia goleador (gpg >= 0.15) é menos Arm e mais Fin — leve penalidade para
+    // liberar Fin como característica principal nesses casos (v5.1).
+    if (m.goalsPerGame >= 0.15) pontos -= 15;
+    return Math.max(0, pontos);
   }
 
   private static double scorePasMeia(Metrics m) {
@@ -662,6 +670,10 @@ public final class HeuristicsEngine {
     else if (m.assistsPerGame >= 0.07) pontos += 25;
     if (m.disciplineIndex >= 0.80) pontos += 20;
     if (m.minsPerGame >= 75) pontos += 15;
+    // Bônus arquétipo Fin/Pas: meia ofensivo que marca bem E cria (o clássico "10
+    // goleador"). Pas precisa competir com Dri e Arm como segunda característica
+    // quando Fin domina — sem este bônus, Dri sempre ganhava o slot secundário (v5.1).
+    if (m.goalsPerGame >= 0.12 && m.assistsPerGame >= 0.07) pontos += 35;
     return pontos;
   }
 
@@ -674,19 +686,28 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
-  private static double scoreDriMeia(Metrics m) {
+  private static double scoreDriMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
     if (m.participationPerGame >= 0.20) pontos += 35;
     if (m.age != null && m.age <= 28) pontos += 25;
     if (m.height <= 1.75) pontos += 20;
     if (m.assistsPerGame >= 0.10) pontos += 20;
-    return pontos;
+    // Meia ofensivo goleador: Pas é melhor segunda característica que Dri — quando
+    // o jogador já finaliza muito, o aspecto criativo deve ser Pas, não Dri (v5.1).
+    if (ofensivo && m.goalsPerGame >= 0.15) pontos -= 20;
+    return Math.max(0, pontos);
   }
 
   private static double scoreFinMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
-    if (m.goalsPerGame >= 0.12) pontos += 40;
-    else if (m.goalsPerGame >= 0.08) pontos += 30;
+    // Tiers escalonados: Fin precisa vencer Arm para meias muito goleadores (v5.1).
+    // Com apenas dois tiers (≥0.12:+40), o teto de 75 pts era sempre superado
+    // por scoreArmMeia, impedindo Fin/Pas de aparecer para scorers dominantes.
+    if (m.goalsPerGame >= 0.25)      pontos += 70;
+    else if (m.goalsPerGame >= 0.20) pontos += 55;
+    else if (m.goalsPerGame >= 0.15) pontos += 45;
+    else if (m.goalsPerGame >= 0.12) pontos += 35;
+    else if (m.goalsPerGame >= 0.08) pontos += 25;
     if (ofensivo) pontos += 20;
     if (m.penaltyGoals > 0) pontos += 15;
     if (m.mpg > 0 && m.mpg < 1000) pontos += 15;
@@ -716,9 +737,10 @@ public final class HeuristicsEngine {
     if (m.mpg > 0 && m.mpg < 300) pontos += 25;
     else if (m.mpg > 0 && m.mpg < 500) pontos += 15;
     if (m.penaltyGoals >= 3) pontos += 10;
-    // Bônus de contexto: pontas com taxa de gol real merecem Fin competindo com Vel.
-    // Sem esse bônus, Fin/Vel nunca aparecia porque Vel + bônus-ponta + idade dominavam.
-    if (ponta && m.goalsPerGame >= 0.10) pontos += 30;
+    // Bônus de contexto: pontas com taxa de gol real merecem Fin/Vel em vez de Vel/Dri.
+    // Aumentado de +30 para +50 (v5.2): com +30, Dri ainda vencia o slot secundário
+    // porque ppg >= 0.25 dava +30 ao Dri de forma automática (ex.: Doku, Savinho).
+    if (ponta && m.goalsPerGame >= 0.10) pontos += 50;
     return pontos;
   }
 
@@ -730,6 +752,11 @@ public final class HeuristicsEngine {
     if (m.participationPerGame >= 0.25) pontos += 15;
     if (centroavante && m.age != null && m.age <= 25) pontos += 25;
     if (ponta && m.assistsPerGame >= 0.10 && m.height <= 1.78) pontos -= 15;
+    // Ponta scorer-dominante (gpg >= 0.15 e mais gols que assists): Vel é o melhor
+    // par secundário com Fin. Sem este bônus, Dri vencia o slot apesar da penalidade,
+    // gerando Fin/Dri em vez de Fin/Vel ou Vel/Fin para pontas goleadoras (v5.1).
+    if (ponta && m.goalsPerGame >= 0.15 && m.goalsPerGame > m.assistsPerGame)
+      pontos += 25;
     return Math.max(0, pontos);
   }
 
@@ -755,11 +782,18 @@ public final class HeuristicsEngine {
     if (segundo) pontos += 20;
     // Ponta dribbladora com muita assistência ainda recebe bônus, mas menor e condicional.
     if (ponta && m.assistsPerGame >= 0.12) pontos += 15;
-    if (ponta && m.participationPerGame >= 0.25) pontos += 30;
+    // Bônus ppg para PONTA só se gpg < 0.10: ponta que marca razoavelmente (gpg >= 0.10)
+    // não deve ter Dri inflado por participação alta — afinal, a participação vem dos
+    // gols, não dos dribles. Sem essa condição, Doku (gpg=0.142) e Savinho (gpg=0.120)
+    // recebiam +30 no Dri via ppg>=0.25 e ficavam Vel/Dri em vez de Vel/Fin (v5.2).
+    if (ponta && m.participationPerGame >= 0.25 && m.goalsPerGame < 0.10) pontos += 30;
     if (m.goalsPerGame >= 0.15 && m.assistsPerGame >= 0.08) pontos += 25;
-    // Penalty: pontas com taxa de gol relevante devem ter Fin, não Dri.
-    // Isso garante que Fin/Vel apareça para pontas goleadoras (gpg >= 0.10).
-    if (ponta && m.goalsPerGame >= 0.10) pontos -= 25;
+    // Penalidade graduada: pontas com taxa de gol alta têm Vel como melhor par
+    // secundário — garante Fin/Vel (não Fin/Dri) para scorers dominantes (v5.1).
+    // gpg >= 0.15: penalidade forte (-40) — pontas muito goleadoras
+    // gpg >= 0.10: penalidade moderada (-25) — pontas goleadoras regulares
+    if (ponta && m.goalsPerGame >= 0.15)      pontos -= 40;
+    else if (ponta && m.goalsPerGame >= 0.10) pontos -= 25;
     return Math.max(0, pontos);
   }
 
@@ -1072,7 +1106,7 @@ public final class HeuristicsEngine {
         scores.put(4, scoreArmMeia(m, true));
         scores.put(11, scorePasMeia(m));
         scores.put(13, scoreVelMeia(m, true));
-        scores.put(8, scoreDriMeia(m));
+        scores.put(8, scoreDriMeia(m, true));
         scores.put(9, scoreFinMeia(m, true));
         scores.put(7, scoreDesMeia(m));
       } else {
@@ -1080,7 +1114,7 @@ public final class HeuristicsEngine {
         scores.put(4, scoreArmMeia(m, false));
         scores.put(11, scorePasMeia(m));
         scores.put(13, scoreVelMeia(m, false));
-        scores.put(8, scoreDriMeia(m));
+        scores.put(8, scoreDriMeia(m, false));
         scores.put(9, scoreFinMeia(m, false));
         scores.put(7, scoreDesMeia(m));
       }
