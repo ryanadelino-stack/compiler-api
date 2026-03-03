@@ -788,12 +788,26 @@ public final class HeuristicsEngine {
     // recebiam +30 no Dri via ppg>=0.25 e ficavam Vel/Dri em vez de Vel/Fin (v5.2).
     if (ponta && m.participationPerGame >= 0.25 && m.goalsPerGame < 0.10) pontos += 30;
     if (m.goalsPerGame >= 0.15 && m.assistsPerGame >= 0.08) pontos += 25;
-    // Penalidade graduada: pontas com taxa de gol alta têm Vel como melhor par
-    // secundário — garante Fin/Vel (não Fin/Dri) para scorers dominantes (v5.1).
-    // gpg >= 0.15: penalidade forte (-40) — pontas muito goleadoras
-    // gpg >= 0.10: penalidade moderada (-25) — pontas goleadoras regulares
-    if (ponta && m.goalsPerGame >= 0.15)      pontos -= 40;
-    else if (ponta && m.goalsPerGame >= 0.10) pontos -= 25;
+    // Penalidade baseada no ratio gpg/apg (v5.2):
+    // A penalidade antes era flat (-40 para qualquer gpg >= 0.15), o que
+    // prejudicava pontas como Jhon Arias (gpg=0.162, apg=0.164, ratio=0.99)
+    // que criam tanto quanto marcam — para esses, Fin/Dri é mais representativo.
+    //
+    // Lógica do ratio:
+    //   ratio > 1.5  → scorer dominante (ex.: Sorriso 3.73, Paulinho 3.00)
+    //                  → penalidade forte, Vel vence Dri → Fin/Vel
+    //   ratio > 1.0  → leve scorer (ex.: Ramón Sosa 1.29, Semenyo 1.71)
+    //                  → penalidade moderada, Vel ainda costuma vencer → Fin/Vel
+    //   ratio <= 1.0 → criador-scorer (apg >= gpg, ex.: Jhon Arias 0.99, Doku 0.72)
+    //                  → sem penalidade extra, Dri competitivo → Fin/Dri possível
+    if (ponta && m.goalsPerGame >= 0.15) {
+      double ratio = m.goalsPerGame / Math.max(0.001, m.assistsPerGame);
+      if (ratio > 1.5)      pontos -= 40;  // scorer dominante
+      else if (ratio > 1.0) pontos -= 20;  // leve scorer
+      // ratio <= 1.0: sem penalidade adicional
+    } else if (ponta && m.goalsPerGame >= 0.10) {
+      pontos -= 25;
+    }
     return Math.max(0, pontos);
   }
 
