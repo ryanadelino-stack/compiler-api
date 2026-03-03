@@ -49,7 +49,7 @@
     { "id": 16, "nome": "Azerbaijão", "aliases": ["Azerbaijan", "Azerbaijao"] },
     { "id": 17, "nome": "Bahamas" },
     { "id": 18, "nome": "Bahrain" },
-    { "id": 19, "nome": "Bangladesh" },
+    { "id": 19, "nome": "Bangladesh", "aliases": ["Bangladeche"] },
     { "id": 20, "nome": "Barbados" },
     { "id": 21, "nome": "Bélgica", "aliases": ["Belgium", "Belgica", "België"] },
     { "id": 22, "nome": "Belize" },
