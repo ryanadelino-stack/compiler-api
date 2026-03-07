@@ -53,7 +53,7 @@
     { "id": 20, "nome": "Barbados" },
     { "id": 21, "nome": "Bélgica", "aliases": ["Belgium", "Belgica", "België"] },
     { "id": 22, "nome": "Belize" },
-    { "id": 23, "nome": "Benin" },
+    { "id": 23, "nome": "Benin", "aliases": ["Benim"] },
     { "id": 24, "nome": "Bermudas", "aliases": ["Bermuda"] },
     { "id": 25, "nome": "Belarus", "aliases": ["Bielorrússia", "Bielorrussia", "Belarussia"] },
     { "id": 26, "nome": "Bolívia", "aliases": ["Bolivia"] },
