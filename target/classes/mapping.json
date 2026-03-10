@@ -284,7 +284,7 @@
     { "id": 212, "nome": "Montserrat" },
     { "id": 213, "nome": "Ilhas Turks e Caicos", "aliases": ["Turks and Caicos Islands"] },
     { "id": 214, "nome": "Samoa Americana", "aliases": ["American Samoa"] },
-    { "id": 215, "nome": "Nova Caledônia", "aliases": ["New Caledonia"] },
+    { "id": 215, "nome": "Nova Caledônia", "aliases": ["New Caledonia", "Neocaledónia"] },
     { "id": 216, "nome": "Gibraltar" },
     { "id": 217, "nome": "Guadalupe", "aliases": ["Guadeloupe"] },
     { "id": 218, "nome": "Guam" },
