@@ -34,7 +34,8 @@ public final class BanCompiler {
       Path templateBan,
       Path outBan,
       Integer teamIdOverride,
-      Integer countryIdOverride
+      Integer countryIdOverride,
+      boolean competitive          // modo competitivo: limite 25 jogadores, sem titulares
   ) throws IOException {
 
     JsonElement rootEl = readJsonRoot(inputJson);
@@ -173,7 +174,8 @@ public final class BanCompiler {
           } else {
             minsParaOrdem = st.minutesPlayed;
           }
-          minutesByIndex.add(new int[]{jogadores.size(), minsParaOrdem});
+          // [0]=índice no ArrayList jogadores, [1]=minsParaOrdem (season ou carreira), [2]=minutesPlayed carreira
+          minutesByIndex.add(new int[]{jogadores.size(), minsParaOrdem, st.minutesPlayed});
           jogadores.add(p);
         }
       }
@@ -224,28 +226,99 @@ public final class BanCompiler {
       }
     }
 
-    // Marca os 15 jogadores com mais minutos na temporada como titulares (f=1 = boneco verde).
-    // Jogadores com 0 minutos na temporada ficam com f=0 (reserva).
+    // Ordena sêniors por minutos DESC — base tanto para titulares quanto para corte competitivo.
     minutesByIndex.sort((a, b) -> Integer.compare(b[1], a[1]));
 
-    int TITULARES_COUNT = 15;
-    int marked = 0;
-    if (DEBUG) System.out.println("[DEBUG] Titulares (top " + TITULARES_COUNT + " por minutos):");
-    for (int k = 0; k < minutesByIndex.size() && marked < TITULARES_COUNT; k++) {
-      int idx  = minutesByIndex.get(k)[0];
-      int mins = minutesByIndex.get(k)[1];
+    if (competitive) {
+      // ── Modo Competitivo ──────────────────────────────────────────────────────
+      // Regras da liga:
+      //   1. Elenco sênior limitado a 25 jogadores.
+      //   2. Nenhum jogador é marcado como titular (f=0 para todos — sem boneco verde).
+      //
+      // Seleção em dois níveis para evitar que jogadores do sub-20 "roubem" vagas
+      // de jogadores que atuaram pelo time principal na temporada:
+      //
+      //   Nível 1 (prioridade): minutesPlayedSeason > 0 → jogaram pelo sênior esta temporada
+      //                         Ordenados por minutos na temporada DESC.
+      //   Nível 2 (preenchimento): minutesPlayedSeason == 0 → não jogaram pelo sênior
+      //                            (sub-20 ou não utilizados). Entram apenas para completar
+      //                            as 25 vagas restantes, ordenados por minutos de carreira DESC.
+      //
+      // Jogadores jovens que já atuam regularmente pelo sênior (minutesPlayedSeason > 0)
+      // são tratados como Nível 1 normalmente — independente da idade.
+      final int MAX_COMPETITIVE = 25;
+      ArrayList<Object> jogadoresFinal = new ArrayList<>();
 
-      if (mins <= 0) break; // demais também serão 0
+      if (anyHasSeasonMins) {
+        // ── Com dados de temporada: separar em dois níveis ───────────────────
+        ArrayList<int[]> nivel1 = new ArrayList<>(); // jogaram pelo sênior esta temporada
+        ArrayList<int[]> nivel2 = new ArrayList<>(); // não jogaram pelo sênior esta temporada
 
-      setAnyField(jogadores.get(idx), 1, "f"); // f=1 = boneco verde (titular)
-      marked++;
+        for (int[] entry : minutesByIndex) {
+          if (entry[1] > 0) nivel1.add(entry); // minutesPlayedSeason > 0
+          else              nivel2.add(entry); // minutesPlayedSeason == 0
+        }
 
-      if (DEBUG) {
-        Object nomeJ = getAnyField(jogadores.get(idx), "a");
-        System.out.println("[DEBUG]  " + marked + ". " + nomeJ + " mins=" + mins);
+        // nivel1 já está ordenado DESC por season minutes (minutesByIndex foi sorted acima)
+        // nivel2: ordenar por minutos de carreira DESC (entry[2] = minutesPlayed)
+        nivel2.sort((a, b) -> Integer.compare(b[2], a[2]));
+
+        if (DEBUG) {
+          System.out.println("[DEBUG] competitivo nivel1 (jogaram pelo senior esta temporada): " + nivel1.size());
+          System.out.println("[DEBUG] competitivo nivel2 (sem minutos pelo senior): " + nivel2.size());
+        }
+
+        // Preenche até 25: nível 1 primeiro, depois nível 2
+        for (int[] entry : nivel1) {
+          if (jogadoresFinal.size() >= MAX_COMPETITIVE) break;
+          jogadoresFinal.add(jogadores.get(entry[0]));
+          if (DEBUG) {
+            Object nome = getAnyField(jogadores.get(entry[0]), "a");
+            System.out.println("[DEBUG] competitivo N1: " + nome + " seasonMins=" + entry[1]);
+          }
+        }
+        for (int[] entry : nivel2) {
+          if (jogadoresFinal.size() >= MAX_COMPETITIVE) break;
+          jogadoresFinal.add(jogadores.get(entry[0]));
+          if (DEBUG) {
+            Object nome = getAnyField(jogadores.get(entry[0]), "a");
+            System.out.println("[DEBUG] competitivo N2 (preenchimento): " + nome + " careerMins=" + entry[2]);
+          }
+        }
+      } else {
+        // ── Sem dados de temporada: usa top 25 por minutos de carreira ────────
+        for (int k = 0; k < Math.min(MAX_COMPETITIVE, minutesByIndex.size()); k++) {
+          jogadoresFinal.add(jogadores.get(minutesByIndex.get(k)[0]));
+        }
       }
+
+      jogadores = jogadoresFinal;
+      if (DEBUG) System.out.println("[DEBUG] competitivo: elenco final com "
+          + jogadores.size() + "/" + minutesByIndex.size()
+          + " jogadores (sem marcacao de titulares).");
+    } else {
+      // ── Modo Padrão (individual / por liga) ──────────────────────────────────
+      // Marca os 15 jogadores com mais minutos na temporada como titulares (f=1 = boneco verde).
+      // Jogadores com 0 minutos na temporada ficam com f=0 (reserva).
+      int TITULARES_COUNT = 15;
+      int marked = 0;
+      if (DEBUG) System.out.println("[DEBUG] Titulares (top " + TITULARES_COUNT + " por minutos):");
+      for (int k = 0; k < minutesByIndex.size() && marked < TITULARES_COUNT; k++) {
+        int idx  = minutesByIndex.get(k)[0];
+        int mins = minutesByIndex.get(k)[1];
+
+        if (mins <= 0) break; // demais também serão 0
+
+        setAnyField(jogadores.get(idx), 1, "f"); // f=1 = boneco verde (titular)
+        marked++;
+
+        if (DEBUG) {
+          Object nomeJ = getAnyField(jogadores.get(idx), "a");
+          System.out.println("[DEBUG]  " + marked + ". " + nomeJ + " mins=" + mins);
+        }
+      }
+      if (DEBUG) System.out.println("[DEBUG] Total titulares marcados: " + marked + "/" + TITULARES_COUNT);
     }
-    if (DEBUG) System.out.println("[DEBUG] Total titulares marcados: " + marked + "/" + TITULARES_COUNT);
 
     // 4) Seta jogadores seniors no campo l
     setAnyField(team, jogadores, "l", "jogadores");
