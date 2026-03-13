@@ -8,7 +8,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.file.*;
 
 import java.io.InvalidClassException;
-import java.nio.charset.StandardCharsets;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
@@ -24,8 +23,14 @@ public class CompileController {
       @RequestPart("template") MultipartFile templateBan,
       @RequestPart("teamJson") MultipartFile teamJson,
       @RequestPart(value = "teamIdOverride", required = false) Integer teamIdOverride,
-      @RequestPart(value = "countryIdOverride", required = false) Integer countryIdOverride
+      @RequestPart(value = "countryIdOverride", required = false) Integer countryIdOverride,
+      // ── Modo Competitivo ─────────────────────────────────────────────────────
+      // Quando true: elenco sênior limitado a 25 jogadores (top por minutos),
+      // sem marcação de titulares (f=0 para todos).
+      @RequestParam(value = "competitive", required = false, defaultValue = "false") String competitiveStr
   ) {
+    boolean competitive = "true".equalsIgnoreCase(competitiveStr);
+
     try {
       if (templateBan == null || templateBan.isEmpty()) {
         return ResponseEntity.badRequest().body("template (.ban) ausente".getBytes());
@@ -47,7 +52,8 @@ public class CompileController {
           templatePath,
           outBanPath,
           teamIdOverride,
-          countryIdOverride
+          countryIdOverride,
+          competitive          // ← novo parâmetro
       );
 
       byte[] outBytes = Files.readAllBytes(outBanPath);
@@ -63,23 +69,22 @@ public class CompileController {
           .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"time.ban\"")
           .body(outBytes);
 
-} catch (IllegalArgumentException e) {
-  // muito provável: template não é um .ban compatível com o seu readSerialized()
-  return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-      .contentType(MediaType.TEXT_PLAIN)
-      .body(("Template inválido/incompatível: " + e.getMessage()).getBytes());
-} catch (InvalidClassException e) {
-  String rejected = br.brasfoot.compiler.SafeDeserialization.getLastRejected();
-  String extra = (rejected != null) ? (" (class=" + rejected + ")") : "";
-  return ResponseEntity.badRequest()
-      .contentType(MediaType.TEXT_PLAIN)
-      .body(("Template bloqueado pelo filtro: " + e.getMessage() + extra)
-          .getBytes(StandardCharsets.UTF_8));
-}
- catch (Exception e) {
-  return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-      .contentType(MediaType.TEXT_PLAIN)
-      .body(("Erro ao compilar: " + e.getClass().getSimpleName() + " - " + e.getMessage()).getBytes());
-}
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .contentType(MediaType.TEXT_PLAIN)
+          .body(("Template inválido/incompatível: " + e.getMessage()).getBytes());
+    } catch (InvalidClassException e) {
+      String rejected = br.brasfoot.compiler.SafeDeserialization.getLastRejected();
+      String extra = (rejected != null)
+          ? " [classe rejeitada: " + rejected + "]"
+          : "";
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .contentType(MediaType.TEXT_PLAIN)
+          .body(("Template incompatível com esta versão do Brasfoot" + extra).getBytes());
+    } catch (Exception e) {
+      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+          .contentType(MediaType.TEXT_PLAIN)
+          .body(("Erro interno: " + e.getMessage()).getBytes());
+    }
   }
 }
