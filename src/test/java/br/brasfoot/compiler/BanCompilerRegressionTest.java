@@ -34,7 +34,8 @@ public class BanCompilerRegressionTest {
         templateBan,
         outBan,
         null,
-        null
+        null,
+        false
     ));
 
     assertTrue(Files.exists(outBan), "Arquivo .ban de saída não foi gerado");
@@ -60,7 +61,8 @@ public class BanCompilerRegressionTest {
         templateBan,
         outBan,
         null,
-        null
+        null,
+        false
     );
 
     // Lê JSON de entrada para referência de quantidade
