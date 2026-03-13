@@ -35,7 +35,7 @@ public final class Main {
             Path input = requirePath(a, "--input");
             Path out = requirePath(a, "--out");
 
-            BanCompiler.compileTeamJsonToBan(input, template, out, teamId, countryId);
+            BanCompiler.compileTeamJsonToBan(input, template, out, teamId, countryId, false);
             System.out.println("OK: " + out);
             return;
         }
@@ -60,7 +60,7 @@ public final class Main {
                         base = base.substring(0, base.length() - 5); // remove .json
                         Path out = outDir.resolve(base + ".ban");
 
-                        BanCompiler.compileTeamJsonToBan(p, template, out, teamId, countryId);
+                        BanCompiler.compileTeamJsonToBan(p, template, out, teamId, countryId, false);
                         System.out.println("OK: " + out);
                     } catch (Exception e) {
                         System.err.println("FAIL: " + p + " -> " + (e.getMessage() != null ? e.getMessage() : e));
