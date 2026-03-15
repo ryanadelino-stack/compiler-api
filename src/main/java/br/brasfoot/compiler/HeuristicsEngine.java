@@ -363,48 +363,108 @@ public final class HeuristicsEngine {
   // -------------------------------------------------------------------------
 
   // Goleiro
+  // ─── Redesign v5.2 ──────────────────────────────────────────────────────────
+  // Problema anterior: as 4 funções usavam as mesmas métricas (GPG, CSR, played)
+  // com pesos parecidos → DPe dominava ~75% dos goleiros, SGo raramente aparecia.
+  //
+  // Nova lógica: cada função tem um INDICADOR PRIMÁRIO claro e distinto:
+  //   Col  → CSR alto + GPG baixo  (posicionamento = clean sheets)
+  //   Ref  → GPG baixo + JUVENTUDE (reflexos no pico = jovem que para chutes)
+  //   DPe  → IDADE alta + muitos jogos (veterano com experiência acumulada)
+  //   SGo  → ALTURA (≥1.85 obrigatório) + experiência  (comanda a área)
+  // ────────────────────────────────────────────────────────────────────────────
+
   private static double scoreCol(Metrics m) {
     double pontos = 0;
-    if (m.cleanSheetRate >= 0.40) pontos += 40;
-    else if (m.cleanSheetRate >= 0.30) pontos += 30;
-    else if (m.cleanSheetRate >= 0.25) pontos += 20;
-    if (m.goalsConcededPerGame <= 1.0) pontos += 30;
-    else if (m.goalsConcededPerGame <= 1.2) pontos += 20;
-    if (m.height >= 1.88) pontos += 15;
-    if (m.played >= 150) pontos += 15;
+    // CSR é o indicador primário de colocação: clean sheets refletem posicionamento
+    if (m.cleanSheetRate >= 0.42) pontos += 50;
+    else if (m.cleanSheetRate >= 0.35) pontos += 35;
+    else if (m.cleanSheetRate >= 0.28) pontos += 18;
+    else if (m.cleanSheetRate >= 0.22) pontos += 8;
+    // GPG complementa: bom posicionamento também reduz gols sofridos
+    if (m.goalsConcededPerGame <= 0.90) pontos += 35;
+    else if (m.goalsConcededPerGame <= 1.05) pontos += 22;
+    else if (m.goalsConcededPerGame <= 1.15) pontos += 12;
+    // Experiência: posicionamento é construído ao longo dos jogos
+    if (m.played >= 200) pontos += 20;
+    else if (m.played >= 100) pontos += 12;
+    // Sinergia Ref/Col: goleiro defensivamente sólido (CSR alto E GPG razoável)
+    // tem perfil que valoriza ambas as características — bônus incentiva Col a
+    // competir com SGo nesses casos, tornando Ref/Col mais frequente (v5.2).
+    if (m.cleanSheetRate >= 0.30 && m.goalsConcededPerGame <= 1.10) pontos += 20;
+    else if (m.cleanSheetRate >= 0.28 && m.goalsConcededPerGame <= 1.20) pontos += 10;
     return pontos;
   }
 
   private static double scoreRef(Metrics m) {
     double pontos = 0;
-    if (m.goalsConcededPerGame <= 1.0) pontos += 35;
-    else if (m.goalsConcededPerGame <= 1.3) pontos += 25;
-    if (m.cleanSheetRate >= 0.30) pontos += 30;
-    double mediaDefesas = (m.played - m.cs) / (double) m.played;
-    if (mediaDefesas >= 0.70) pontos += 20;
-    if (m.age != null && m.age <= 30) pontos += 15;
+    // GPG é o indicador primário: reflexos bons = poucos gols sofridos
+    if (m.goalsConcededPerGame <= 0.90) pontos += 45;
+    else if (m.goalsConcededPerGame <= 1.05) pontos += 32;
+    else if (m.goalsConcededPerGame <= 1.15) pontos += 22;
+    else if (m.goalsConcededPerGame <= 1.25) pontos += 12;
+    // IDADE com dois perfis de longevidade (v5.2):
+    // Goleiros muito altos (>=1.92m) perdem reflexo mais cedo — a altura exige
+    // mais deslocamento lateral, e o corpo não responde tão bem após os 29.
+    // Goleiros de altura normal têm longevidade maior — escala estendida até 37.
+    if (m.height >= 1.92) {
+      if (m.age != null && m.age <= 25)      pontos += 30;
+      else if (m.age != null && m.age <= 27) pontos += 18;
+      else if (m.age != null && m.age <= 29) pontos += 8;
+      // acima de 29 e muito alto: reflexo cedeu — SGo e DPe dominam
+    } else {
+      if (m.age != null && m.age <= 25)      pontos += 30;
+      else if (m.age != null && m.age <= 28) pontos += 22;
+      else if (m.age != null && m.age <= 31) pontos += 14;
+      else if (m.age != null && m.age <= 34) pontos += 8;
+      else if (m.age != null && m.age <= 37) pontos += 4;
+    }
+    // CSR como bônus secundário
+    if (m.cleanSheetRate >= 0.35) pontos += 15;
+    else if (m.cleanSheetRate >= 0.28) pontos += 8;
+    if (m.played >= 60) pontos += 10;
+    // Sinergia Ref/Col: goleiro que para bem e tem cleansheets = shot-stopper
+    // reflexivo — espelha o bônus de scoreCol para favorecer o par (v5.2).
+    if (m.goalsConcededPerGame <= 1.10 && m.cleanSheetRate >= 0.30) pontos += 15;
+    else if (m.goalsConcededPerGame <= 1.20 && m.cleanSheetRate >= 0.28) pontos += 8;
     return pontos;
   }
 
   private static double scoreDPe(Metrics m) {
     double pontos = 0;
-    if (m.played >= 100) pontos += 30;
-    if (m.cleanSheetRate >= 0.25) pontos += 25;
-    if (m.height >= 1.85) pontos += 20;
-    if (m.age != null && m.age >= 28) pontos += 15;
-    if (m.goalsConcededPerGame <= 1.2) pontos += 10;
+    // IDADE é o indicador primário: DPe é mérito de veterano experiente
+    if (m.age != null && m.age >= 33) pontos += 45;
+    else if (m.age != null && m.age >= 30) pontos += 30;
+    else if (m.age != null && m.age >= 27) pontos += 15;
+    // Muitos jogos acumulados reforçam a experiência
+    if (m.played >= 250) pontos += 35;
+    else if (m.played >= 150) pontos += 22;
+    else if (m.played >= 80) pontos += 10;
+    // Goleiros em times mais fracos (GPG alto) enfrentam mais situações de pênalti
+    if (m.goalsConcededPerGame >= 1.15) pontos += 20;
+    else if (m.goalsConcededPerGame >= 1.05) pontos += 10;
+    if (m.cleanSheetRate >= 0.28) pontos += 10;
     return pontos;
   }
 
   private static double scoreSGo(Metrics m) {
+    // ALTURA mínima obrigatória: sem 1.85m não comanda a área
+    if (m.height < 1.85) return 0;
     double pontos = 0;
-    if (m.height >= 2.00) pontos += 80;
-    else if (m.height >= 1.95) pontos += 60;
-    else if (m.height >= 1.92) pontos += 40;
-    else if (m.height >= 1.88) pontos += 25;
+    // ALTURA é o indicador primário: quanto mais alto, mais domina o espaço aéreo
+    if (m.height >= 1.93) pontos += 55;
+    else if (m.height >= 1.90) pontos += 40;
+    else if (m.height >= 1.87) pontos += 25;
+    else if (m.height >= 1.85) pontos += 12;
+    // Experiência mínima para sair com segurança
     if (m.played >= 120) pontos += 20;
-    if (m.cleanSheetRate >= 0.30) pontos += 20;
-    if (m.age != null && m.age >= 27 && m.age <= 33) pontos += 15;
+    else if (m.played >= 60) pontos += 12;
+    // Goleiro maduro comanda melhor (não muito jovem, não muito velho)
+    if (m.age != null && m.age >= 24 && m.age <= 37) pontos += 15;
+    // Desempenho defensivo como bônus
+    if (m.cleanSheetRate >= 0.30) pontos += 15;
+    else if (m.cleanSheetRate >= 0.22) pontos += 8;
+    // Assistências = chutão longo que vira jogada (saída de bola ativa)
     if (m.assists > 0) pontos += 20;
     return pontos;
   }
