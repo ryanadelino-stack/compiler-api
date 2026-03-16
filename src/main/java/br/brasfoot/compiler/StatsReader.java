@@ -33,6 +33,14 @@ public final class StatsReader {
     // GK
     public int goalsConceded;
     public int cleanSheets;
+
+    /**
+     * Estatísticas de pênaltis do goleiro (campo gk.penalties no JSON).
+     * Populadas pelo módulo fetchPenaltyStats.js.
+     * Permanecem zero quando o campo não está presente (JSON antigo ou jogador de linha).
+     */
+    public int penFaced;   // total de pênaltis enfrentados na carreira
+    public int penSaved;   // total de pênaltis defendidos
   }
 
   public static Stats read(JsonObject player) {
@@ -68,6 +76,14 @@ public final class StatsReader {
     if (gk != null) {
       s.goalsConceded = getInt(gk, "goalsConceded");
       s.cleanSheets = getInt(gk, "cleanSheets");
+
+      // Campo adicionado por fetchPenaltyStats.js — ausente em JSONs antigos
+      JsonObject penalties = asObj(gk.get("penalties"));
+      if (penalties != null) {
+        s.penFaced = getInt(penalties, "faced");
+        s.penSaved = getInt(penalties, "saved");
+        // saveRate é derivado no HeuristicsEngine a partir de penFaced/penSaved
+      }
     }
 
     return s;
