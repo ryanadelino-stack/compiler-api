@@ -581,6 +581,8 @@ public final class BanCompiler {
         st.minutesPlayed,
         st.goalsConceded,
         st.cleanSheets,
+        st.penFaced,
+        st.penSaved,
         idadeParam,
         heightM
     );
@@ -599,6 +601,8 @@ public final class BanCompiler {
           + " min=" + st.minutesPlayed
           + " gc=" + st.goalsConceded
           + " cs=" + st.cleanSheets
+          + " penFaced=" + st.penFaced
+          + " penSaved=" + st.penSaved
           + " -> cr1=" + top2[0] + " cr2=" + top2[1]
       );
     }
