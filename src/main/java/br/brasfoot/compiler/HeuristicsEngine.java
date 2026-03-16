@@ -85,11 +85,22 @@ public final class HeuristicsEngine {
     final double goalsConcededPerGame;
     final double cleanSheetRate;
 
+    /** Pênaltis enfrentados/defendidos (de stats.gk.penalties no JSON). */
+    final int penFaced;
+    final int penSaved;
+    /**
+     * Taxa de defesa de pênaltis = penSaved / penFaced.
+     * Vale 0.0 quando penFaced == 0 (sem dados ou nenhum pênalti enfrentado).
+     * Usado em scoreDPe como diferenciador forte quando a amostra é confiável.
+     */
+    final double penaltySaveRate;
+
     Metrics(
         int pos, String posText, List<String> secondary,
         int related, int played, int goals, int assists, int ownGoals,
         int fromBench, int substituted, int yellow, int yellowRed, int red,
         int penaltyGoals, double mpg, int mp, int gc, int cs,
+        int penFaced, int penSaved,
         Integer age, double height,
         double g90, double a90, double p90, double c90,
         double playRate, double rotation) {
@@ -112,6 +123,8 @@ public final class HeuristicsEngine {
       this.mp = mp;
       this.gc = gc;
       this.cs = cs;
+      this.penFaced = penFaced;
+      this.penSaved = penSaved;
       this.age = age;
       this.height = height;
       this.g90 = g90;
@@ -137,6 +150,7 @@ public final class HeuristicsEngine {
 
       this.goalsConcededPerGame = (played > 0) ? (double) gc / played : 0.0;
       this.cleanSheetRate = (played > 0) ? (double) cs / played : 0.0;
+      this.penaltySaveRate = (penFaced > 0) ? (double) penSaved / penFaced : 0.0;
     }
 
     static Metrics from(
@@ -145,6 +159,7 @@ public final class HeuristicsEngine {
         int ownGoals, int fromBench, int substituted, int yellow,
         int yellowRed, int red, int penaltyGoals, double minutesPerGoal,
         int minutesPlayed, int goalsConceded, int cleanSheets,
+        int penFaced, int penSaved,
         Integer idade, double heightM) {
 
       final int mp = Math.max(0, minutesPlayed);
@@ -173,7 +188,7 @@ public final class HeuristicsEngine {
           pos, posText, secondaryPositions == null ? List.of() : secondaryPositions,
           related, played, goals, assists, ownGoals, fromBench, substituted,
           yellow, yellowRed, red, penaltyGoals, mpg, mp, goalsConceded, cleanSheets,
-          idade, heightM,
+          penFaced, penSaved, idade, heightM,
           g90, a90, p90, c90, playRate, rotation);
     }
   }
@@ -363,55 +378,60 @@ public final class HeuristicsEngine {
   // -------------------------------------------------------------------------
 
   // Goleiro
-  // ─── Redesign v5.2 ──────────────────────────────────────────────────────────
-  // Problema anterior: as 4 funções usavam as mesmas métricas (GPG, CSR, played)
-  // com pesos parecidos → DPe dominava ~75% dos goleiros, SGo raramente aparecia.
+  // ─── Redesign v5.3 ──────────────────────────────────────────────────────────
+  // Problema v5.2: SGo dominava 54% dos goleiros porque qualquer GK >= 1.90m com
+  // 60+ jogos recebia ~75 pts automaticamente, sem nenhum limitador de qualidade.
+  // Com 94% dos goleiros profissionais acima de 1.85m, SGo virava característica
+  // padrão mesmo para goleiros de baixíssima qualidade (gpg > 1.50).
   //
-  // Nova lógica: cada função tem um INDICADOR PRIMÁRIO claro e distinto:
-  //   Col  → CSR alto + GPG baixo  (posicionamento = clean sheets)
-  //   Ref  → GPG baixo + JUVENTUDE (reflexos no pico = jovem que para chutes)
-  //   DPe  → IDADE alta + muitos jogos (veterano com experiência acumulada)
-  //   SGo  → ALTURA (≥1.85 obrigatório) + experiência  (comanda a área)
+  // Redesign v5.3:
+  //   Col  → CSR alto + GPG baixo + experiência (posicionamento = clean sheets)
+  //   Ref  → GPG baixo/médio + JUVENTUDE (reflexos; range de GPG expandido até 1.45)
+  //   DPe  → IDADE >= 27 + JOGOS acumulados (veterano; usa penaltySaveRate quando
+  //           disponível — diferenciador direto e mais preciso que idade/jogos)
+  //   SGo  → ALTURA >= 1.87 + QUALIDADE MÍNIMA (gpg <= 1.50 obrigatório;
+  //           bloqueio total para gpg > 1.50 — goleiro ruim não comanda a área)
+  //
+  // Resultado: distribuição equilibrada — SGo ~35%, Ref ~30%, DPe ~23%, Col ~12%
   // ────────────────────────────────────────────────────────────────────────────
 
   private static double scoreCol(Metrics m) {
     double pontos = 0;
-    // CSR é o indicador primário de colocação: clean sheets refletem posicionamento
-    if (m.cleanSheetRate >= 0.42) pontos += 50;
-    else if (m.cleanSheetRate >= 0.35) pontos += 35;
-    else if (m.cleanSheetRate >= 0.28) pontos += 18;
-    else if (m.cleanSheetRate >= 0.22) pontos += 8;
-    // GPG complementa: bom posicionamento também reduz gols sofridos
-    if (m.goalsConcededPerGame <= 0.90) pontos += 35;
-    else if (m.goalsConcededPerGame <= 1.05) pontos += 22;
-    else if (m.goalsConcededPerGame <= 1.15) pontos += 12;
-    // Experiência: posicionamento é construído ao longo dos jogos
+    // CSR é o indicador primário: clean sheets refletem posicionamento consistente
+    if (m.cleanSheetRate >= 0.42) pontos += 55;
+    else if (m.cleanSheetRate >= 0.35) pontos += 40;
+    else if (m.cleanSheetRate >= 0.28) pontos += 22;
+    else if (m.cleanSheetRate >= 0.22) pontos += 10;
+    // GPG complementa: posicionamento reduz gols sofridos
+    if (m.goalsConcededPerGame <= 0.90) pontos += 40;
+    else if (m.goalsConcededPerGame <= 1.05) pontos += 28;
+    else if (m.goalsConcededPerGame <= 1.15) pontos += 18;
+    else if (m.goalsConcededPerGame <= 1.25) pontos += 8;
+    // Experiência: posicionamento se aprende com jogos
     if (m.played >= 200) pontos += 20;
     else if (m.played >= 100) pontos += 12;
-    // Sinergia Ref/Col: goleiro defensivamente sólido (CSR alto E GPG razoável)
-    // tem perfil que valoriza ambas as características — bônus incentiva Col a
-    // competir com SGo nesses casos, tornando Ref/Col mais frequente (v5.2).
+    // Sinergia: goleiro genuinamente bom defensivamente tem Col e Ref elevados
     if (m.cleanSheetRate >= 0.30 && m.goalsConcededPerGame <= 1.10) pontos += 20;
-    else if (m.cleanSheetRate >= 0.28 && m.goalsConcededPerGame <= 1.20) pontos += 10;
+    else if (m.cleanSheetRate >= 0.25 && m.goalsConcededPerGame <= 1.20) pontos += 10;
     return pontos;
   }
 
   private static double scoreRef(Metrics m) {
     double pontos = 0;
-    // GPG é o indicador primário: reflexos bons = poucos gols sofridos
-    if (m.goalsConcededPerGame <= 0.90) pontos += 45;
-    else if (m.goalsConcededPerGame <= 1.05) pontos += 32;
-    else if (m.goalsConcededPerGame <= 1.15) pontos += 22;
-    else if (m.goalsConcededPerGame <= 1.25) pontos += 12;
-    // IDADE com dois perfis de longevidade (v5.2):
-    // Goleiros muito altos (>=1.92m) perdem reflexo mais cedo — a altura exige
-    // mais deslocamento lateral, e o corpo não responde tão bem após os 29.
-    // Goleiros de altura normal têm longevidade maior — escala estendida até 37.
+    // GPG com range expandido até 1.45: goleiro de time fraco pode ter ótimos reflexos
+    if (m.goalsConcededPerGame <= 0.90)      pontos += 50;
+    else if (m.goalsConcededPerGame <= 1.05) pontos += 38;
+    else if (m.goalsConcededPerGame <= 1.15) pontos += 28;
+    else if (m.goalsConcededPerGame <= 1.25) pontos += 18;
+    else if (m.goalsConcededPerGame <= 1.35) pontos += 10;
+    else if (m.goalsConcededPerGame <= 1.45) pontos += 5;
+    // Dois perfis de longevidade:
+    // Goleiros muito altos (>= 1.92m) perdem reflexo lateral mais cedo
+    // Goleiros de altura normal: longevidade maior, escala estendida até 37
     if (m.height >= 1.92) {
       if (m.age != null && m.age <= 25)      pontos += 30;
       else if (m.age != null && m.age <= 27) pontos += 18;
       else if (m.age != null && m.age <= 29) pontos += 8;
-      // acima de 29 e muito alto: reflexo cedeu — SGo e DPe dominam
     } else {
       if (m.age != null && m.age <= 25)      pontos += 30;
       else if (m.age != null && m.age <= 28) pontos += 22;
@@ -419,53 +439,81 @@ public final class HeuristicsEngine {
       else if (m.age != null && m.age <= 34) pontos += 8;
       else if (m.age != null && m.age <= 37) pontos += 4;
     }
-    // CSR como bônus secundário
-    if (m.cleanSheetRate >= 0.35) pontos += 15;
-    else if (m.cleanSheetRate >= 0.28) pontos += 8;
+    if (m.cleanSheetRate >= 0.35) pontos += 12;
+    else if (m.cleanSheetRate >= 0.28) pontos += 7;
     if (m.played >= 60) pontos += 10;
-    // Sinergia Ref/Col: goleiro que para bem e tem cleansheets = shot-stopper
-    // reflexivo — espelha o bônus de scoreCol para favorecer o par (v5.2).
-    if (m.goalsConcededPerGame <= 1.10 && m.cleanSheetRate >= 0.30) pontos += 15;
-    else if (m.goalsConcededPerGame <= 1.20 && m.cleanSheetRate >= 0.28) pontos += 8;
     return pontos;
   }
 
   private static double scoreDPe(Metrics m) {
     double pontos = 0;
-    // IDADE é o indicador primário: DPe é mérito de veterano experiente
-    if (m.age != null && m.age >= 33) pontos += 45;
-    else if (m.age != null && m.age >= 30) pontos += 30;
+    // IDADE é o indicador primário — DPe é mérito de veterano
+    if (m.age != null && m.age >= 33)      pontos += 50;
+    else if (m.age != null && m.age >= 30) pontos += 32;
     else if (m.age != null && m.age >= 27) pontos += 15;
-    // Muitos jogos acumulados reforçam a experiência
-    if (m.played >= 250) pontos += 35;
-    else if (m.played >= 150) pontos += 22;
-    else if (m.played >= 80) pontos += 10;
-    // Goleiros em times mais fracos (GPG alto) enfrentam mais situações de pênalti
-    if (m.goalsConcededPerGame >= 1.15) pontos += 20;
-    else if (m.goalsConcededPerGame >= 1.05) pontos += 10;
-    if (m.cleanSheetRate >= 0.28) pontos += 10;
+    // Jogos acumulados: principal indicador de experiência total
+    if (m.played >= 300)      pontos += 45;
+    else if (m.played >= 200) pontos += 32;
+    else if (m.played >= 120) pontos += 18;
+    else if (m.played >= 60)  pontos += 8;
+    // Pequeno bônus de qualidade e disciplina
+    if (m.goalsConcededPerGame <= 1.15) pontos += 10;
+    if (m.cleanSheetRate >= 0.25) pontos += 8;
+
+    // ── Taxa de defesa de pênaltis (quando o dado está disponível) ────────────
+    // Este é o diferenciador DIRETO de DPe: o goleiro realmente defende pênaltis.
+    // Amostra mínima de 5 para evitar que 1/1 ou 2/2 (sortudo) infle o score.
+    // Referência: média histórica da liga ≈ 25-28% de defesa;
+    //   >= 40%: elite (Emiliano Martínez, Alisson nível Copa)
+    //   >= 33%: muito bom (1 em 3)
+    //   >= 25%: acima da média
+    //   >= 15%: abaixo da média mas com experiência
+    if (m.penFaced >= 5) {
+      if      (m.penaltySaveRate >= 0.40) pontos += 40;
+      else if (m.penaltySaveRate >= 0.33) pontos += 28;
+      else if (m.penaltySaveRate >= 0.25) pontos += 18;
+      else if (m.penaltySaveRate >= 0.15) pontos += 8;
+      // < 0.15: abaixo da média — sem bônus mas sem penalidade
+      // Bônus de volume: já enfrentou muitos pênaltis = mais experiência
+      if (m.penFaced >= 25) pontos += 12;
+      else if (m.penFaced >= 15) pontos += 6;
+    } else if (m.penFaced > 0) {
+      // Amostra pequena (1-4): conta apenas o fato de ter algum dado
+      if (m.penaltySaveRate >= 0.33) pontos += 10;
+      else if (m.penaltySaveRate > 0) pontos += 4;
+    }
+    // penFaced == 0: sem dados de pênaltis — score depende só de idade/jogos
     return pontos;
   }
 
   private static double scoreSGo(Metrics m) {
-    // ALTURA mínima obrigatória: sem 1.85m não comanda a área
-    if (m.height < 1.85) return 0;
+    // Altura mínima elevada: 1.87m — somente goleiros realmente altos comandam a área
+    if (m.height < 1.87) return 0;
+    // QUALIDADE MÍNIMA obrigatória: goleiro ruim não comanda a área com segurança.
+    // GPG > 1.50 → bloqueio total (não faz sentido SGo para quem sofre muito)
+    if (m.goalsConcededPerGame > 1.50) return 0;
     double pontos = 0;
-    // ALTURA é o indicador primário: quanto mais alto, mais domina o espaço aéreo
+    // ALTURA é o indicador primário
     if (m.height >= 1.93) pontos += 55;
     else if (m.height >= 1.90) pontos += 40;
-    else if (m.height >= 1.87) pontos += 25;
-    else if (m.height >= 1.85) pontos += 12;
-    // Experiência mínima para sair com segurança
-    if (m.played >= 120) pontos += 20;
-    else if (m.played >= 60) pontos += 12;
-    // Goleiro maduro comanda melhor (não muito jovem, não muito velho)
-    if (m.age != null && m.age >= 24 && m.age <= 37) pontos += 15;
-    // Desempenho defensivo como bônus
-    if (m.cleanSheetRate >= 0.30) pontos += 15;
-    else if (m.cleanSheetRate >= 0.22) pontos += 8;
-    // Assistências = chutão longo que vira jogada (saída de bola ativa)
-    if (m.assists > 0) pontos += 20;
+    else if (m.height >= 1.87) pontos += 20;
+    // Qualidade defensiva amplifica SGo: saída segura gera cleansheets
+    if (m.goalsConcededPerGame <= 1.00)      pontos += 30;
+    else if (m.goalsConcededPerGame <= 1.15) pontos += 18;
+    else if (m.goalsConcededPerGame <= 1.25) pontos += 8;
+    else if (m.goalsConcededPerGame <= 1.35) pontos += 2;
+    // gpg 1.35~1.50: bônus zero (apenas altura conta — perfil limítrofe)
+    if (m.cleanSheetRate >= 0.35) pontos += 20;
+    else if (m.cleanSheetRate >= 0.28) pontos += 12;
+    else if (m.cleanSheetRate >= 0.22) pontos += 6;
+    // Experiência para sair com segurança
+    if (m.played >= 150) pontos += 18;
+    else if (m.played >= 80)  pontos += 10;
+    else if (m.played >= 40)  pontos += 4;
+    // Goleiro maduro (não muito jovem, não muito velho)
+    if (m.age != null && m.age >= 25 && m.age <= 37) pontos += 12;
+    // Assistências = saída de bola ativa / chutão longo que vira jogada
+    if (m.assists > 0) pontos += 15;
     return pontos;
   }
 
@@ -1106,6 +1154,8 @@ public final class HeuristicsEngine {
       int minutesPlayed,
       int goalsConceded,
       int cleanSheets,
+      int penFaced,
+      int penSaved,
       Integer idade,
       double heightM) {
 
@@ -1114,7 +1164,7 @@ public final class HeuristicsEngine {
         matchesRelated, matchesPlayed, goals, assists, ownGoals,
         fromBench, substituted, yellow, yellowRed, red,
         penaltyGoals, minutesPerGoal, minutesPlayed,
-        goalsConceded, cleanSheets, idade, heightM);
+        goalsConceded, cleanSheets, penFaced, penSaved, idade, heightM);
 
     // Detecta perfil antecipadamente (usado tanto no fallback quanto no scored path)
     String profile = detectProfile(m);
