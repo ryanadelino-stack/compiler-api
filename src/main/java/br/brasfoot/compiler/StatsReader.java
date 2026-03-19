@@ -94,16 +94,22 @@ public final class StatsReader {
     if (el == null || el instanceof JsonNull || el.isJsonNull()) return 0.0;
 
     try {
+      double val;
       if (el.isJsonPrimitive() && el.getAsJsonPrimitive().isNumber()) {
-        return el.getAsDouble();
+        val = el.getAsDouble();
+      } else {
+        String raw = el.getAsString();
+        if (raw == null) return 0.0;
+        raw = raw.trim().toLowerCase();
+        raw = raw.replace("m", "").replace(" ", "");
+        raw = raw.replace(",", ".");
+        val = Double.parseDouble(raw);
       }
-      String raw = el.getAsString();
-      if (raw == null) return 0.0;
-      raw = raw.trim().toLowerCase();
-      raw = raw.replace("m", "").replace(" ", "");
-      raw = raw.replace(",", ".");
-      // ex: "1.92"
-      return Double.parseDouble(raw);
+      // Normaliza: valores > 10 estão em centímetros (ex: 186 → 1.86).
+      // O scraper .com.br retorna metros (1.86), mas alguns JSONs de ligas
+      // estrangeiras chegam com centímetros inteiros.
+      if (val > 10.0) val = val / 100.0;
+      return val;
     } catch (Exception ignored) {
       return 0.0;
     }
