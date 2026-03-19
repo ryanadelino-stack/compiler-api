@@ -778,10 +778,11 @@ public final class HeuristicsEngine {
     else if (m.assistsPerGame >= 0.07) pontos += 25;
     if (m.disciplineIndex >= 0.80) pontos += 20;
     if (m.minsPerGame >= 75) pontos += 15;
-    // Bônus arquétipo Fin/Pas: meia ofensivo que marca bem E cria (o clássico "10
-    // goleador"). Pas precisa competir com Dri e Arm como segunda característica
-    // quando Fin domina — sem este bônus, Dri sempre ganhava o slot secundário (v5.1).
-    if (m.goalsPerGame >= 0.12 && m.assistsPerGame >= 0.07) pontos += 35;
+    // Bônus arquétipo Fin/Pas: meia ofensivo clássico "10 goleador".
+    // Threshold elevado de 0.12 → 0.17: com 0.12, quase todo meia produtivo
+    // ativava o bônus, fazendo Pas sempre bater Fin/Dri no segundo slot e
+    // impedindo Arm/Fin de aparecer para os meias com perfil correto.
+    if (m.goalsPerGame >= 0.17 && m.assistsPerGame >= 0.07) pontos += 35;
     return pontos;
   }
 
@@ -796,13 +797,19 @@ public final class HeuristicsEngine {
 
   private static double scoreDriMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
-    if (m.participationPerGame >= 0.20) pontos += 35;
+    // Threshold de participação elevado de 0.20 → 0.25 para o tier máximo:
+    // com 0.20, qualquer meia que some gols e assists regularmente ganhava
+    // +35 de Dri e dominava Fin/Dri. Com 0.25, Dri fica reservado para
+    // jogadores realmente dominantes em participação.
+    if (m.participationPerGame >= 0.25) pontos += 35;
+    else if (m.participationPerGame >= 0.20) pontos += 20;
     if (m.age != null && m.age <= 28) pontos += 25;
     if (m.height <= 1.75) pontos += 20;
     if (m.assistsPerGame >= 0.10) pontos += 20;
-    // Meia ofensivo goleador: Pas é melhor segunda característica que Dri — quando
-    // o jogador já finaliza muito, o aspecto criativo deve ser Pas, não Dri (v5.1).
-    if (ofensivo && m.goalsPerGame >= 0.15) pontos -= 20;
+    // Penalidade para meia ofensivo goleador antecipada de 0.15 → 0.12:
+    // meias com perfil goleador moderado (gpg >= 0.12) já têm Fin/Arm como
+    // destino natural — Dri não deve vencer o segundo slot nesse range.
+    if (ofensivo && m.goalsPerGame >= 0.12) pontos -= 20;
     return Math.max(0, pontos);
   }
 
