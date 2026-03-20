@@ -52,7 +52,9 @@ public final class BanCompiler {
     if (rootEl.isJsonArray()) {
       players = rootEl.getAsJsonArray();
     } else if (rootObj != null) {
-      players = JsonUtil.getArray(rootObj, "roster", "players");
+      JsonArray fromRoster  = JsonUtil.getArray(rootObj, "roster");
+      JsonArray fromPlayers = JsonUtil.getArray(rootObj, "players");
+      players = (fromRoster != null) ? fromRoster : fromPlayers;
     }
 
     // Listas separadas: seniors → l (jogadores), juniors → m (juniores)
@@ -76,51 +78,58 @@ public final class BanCompiler {
     ArrayList<int[]>  deferredSideEntries = new ArrayList<>();
 
     // Primeiro passo: verifica se ALGUM jogador do elenco tem minutesPlayedSeason.
-    // Se sim, usamos minutesPlayedSeason para todos (com fallback 0 para quem não tem).
-    // Se nenhum tem, usamos minutesPlayed (carreira) como critério de titulares.
+    // Se sim, estamos num JSON novo — jogadores sem o campo realmente não jogaram na
+    // temporada (minutesPlayedSeason = 0). Se NENHUM tem o campo, é um JSON antigo e
+    // usamos minutesPlayed (carreira) como fallback para não perder a ordenação.
     boolean anyHasSeasonMins = false;
     if (players != null) {
       for (JsonElement el : players) {
         if (!el.isJsonObject()) continue;
-        JsonObject pj = el.getAsJsonObject();
-        StatsReader.Stats st = StatsReader.read(pj);
+        StatsReader.Stats st = StatsReader.read(el.getAsJsonObject());
         if (st.minutesPlayedSeason >= 0) { anyHasSeasonMins = true; break; }
       }
     }
-
     if (DEBUG) System.out.println("[DEBUG] anyHasSeasonMins=" + anyHasSeasonMins);
 
-    // 4) Constrói jogadores
     if (players != null) {
       for (JsonElement el : players) {
         if (!el.isJsonObject()) continue;
         JsonObject pj = el.getAsJsonObject();
 
-        boolean isJunior = "junior".equalsIgnoreCase(JsonUtil.getString(pj, "category"));
+        // ── Roteamento por categoria ──────────────────────────────────────────
+        // "junior" → aba Juniores (.ban campo m)
+        // "senior" / ausente → aba Jogadores (.ban campo l)
+        String category = JsonUtil.getString(pj, "category");
+        boolean isJunior = "junior".equalsIgnoreCase(category);
+
+        // ── Verificação de lado adiado ANTES de construir o jogador ──────────
+        // Analisa foot + texto da posição diretamente para decidir se o lado é
+        // resolvido agora ou adiado (pós-elenco). Não usamos pi.sideHint para
+        // evitar falsos positivos em posições neutras (ex: "Atacante", "Zagueiro").
+        // Tipos: 0=normal, 1=ambidestro-sem-hint (balanço do elenco), 2=sem-pé-sem-hint (50/50)
+        String footCheck = JsonUtil.getString(pj, "foot");
+        String posTextCheck;
+        {
+          PositionUtil.PosInfo piTmp = PositionUtil.readPosInfo(pj);
+          posTextCheck = piTmp.bestText();
+        }
+        int sideDeferType = getSideDeferralType(footCheck, posTextCheck);
 
         e.g p = buildPlayerFromJson(pj, team, countryIdOverride);
 
-        // Registra para resolução adiada de lado
-        int allIdx = allBuiltPlayers.size();
+        // ── Rastreia jogador para resolução de lado adiado ────────────────────
+        int playerGlobalIdx = allBuiltPlayers.size();
         allBuiltPlayers.add(p);
-
-        String footCheck    = JsonUtil.getString(pj, "foot");
-        String posTextCheck = PositionUtil.readPosInfo(pj).bestText();
-
-        // ── Decisão de deferral ──────────────────────────────────────────────
-        // Critério: pé ambíguo (ambidestro/null) E posição não implica lado.
-        // Posições que implicam lado (Lateral Esq, Ponta Dir, etc.) ficam fixas.
-        boolean shouldDefer = shouldDeferSide(footCheck, posTextCheck);
-
-        if (shouldDefer) {
-          int deferType = ("ambidestro".equalsIgnoreCase(footCheck)) ? 1 : 2;
-          deferredSideEntries.add(new int[]{allIdx, deferType});
+        if (sideDeferType > 0) {
+          // Lado será sobrescrito no bloco pós-loop; -1 é sentinela interna
+          setAnyField(p, -1, "i", "lado");
+          deferredSideEntries.add(new int[]{playerGlobalIdx, sideDeferType});
           if (DEBUG) {
             Object nomeP = getAnyField(p, "a");
             System.out.println("[DEBUG] lado-adiado: " + nomeP
                 + " foot=" + footCheck
                 + " posText=" + posTextCheck
-                + " tipo=" + (deferType == 1 ? "ambidestro" : "sem-pe"));
+                + " deferType=" + (sideDeferType == 1 ? "ambidestro" : "sem-pe"));
           }
         } else if (!positionImpliesSide(posTextCheck) && isExplicitFoot(footCheck)) {
           // ── Pé explícito + posição neutra: mapeia diretamente, ignora SideResolver ─
@@ -177,109 +186,221 @@ public final class BanCompiler {
     // ── Resolução adiada de lado (pós-loop) ───────────────────────────────────
     // Conta quantos jogadores com lado DEFINITIVO estão no elenco (senior + junior).
     // Brasfoot: 0=Direito, 1=Esquerdo.
-    int countRight = 0;
-    int countLeft  = 0;
-    for (Object p : allBuiltPlayers) {
-      Object ladoObj = getAnyField(p, "i");
-      int lado = (ladoObj instanceof Number) ? ((Number) ladoObj).intValue() : 0;
-      if (lado == 0) countRight++;
-      else           countLeft++;
-    }
+    if (!deferredSideEntries.isEmpty()) {
+      java.util.Set<Integer> deferredIndices = new java.util.HashSet<>();
+      for (int[] d : deferredSideEntries) deferredIndices.add(d[0]);
 
-    // Remove contagens dos jogadores com lado adiado (ainda têm o default 0=Direito)
-    for (int[] entry : deferredSideEntries) {
-      countRight--; // cada adiado contribuiu com 0 (Direito) ao default
-    }
-    if (countRight < 0) countRight = 0;
-
-    if (DEBUG) {
-      System.out.println("[DEBUG] lado-adiado: total=" + deferredSideEntries.size()
-          + " definitivos: D=" + countRight + " E=" + countLeft);
-    }
-
-    for (int[] entry : deferredSideEntries) {
-      int allIdx   = entry[0];
-      int deferType = entry[1]; // 1=ambidestro, 2=sem-pé
-
-      Object p = allBuiltPlayers.get(allIdx);
-      int ladoFinal;
-
-      if (deferType == 1) {
-        // Ambidestro: atribui ao lado com MENOS jogadores (para equilibrar)
-        ladoFinal = (countLeft <= countRight) ? 1 : 0;
-      } else {
-        // Sem pé: sorteio 50/50
-        ladoFinal = (Math.random() < 0.5) ? 0 : 1;
-      }
-
-      setAnyField(p, ladoFinal, "i", "lado");
-      if (ladoFinal == 0) countRight++;
-      else               countLeft++;
-
-      if (DEBUG) {
-        Object nomeP = getAnyField(p, "a");
-        System.out.println("[DEBUG] lado-resolvido: " + nomeP
-            + " tipo=" + (deferType == 1 ? "ambidestro" : "sem-pe")
-            + " -> " + (ladoFinal == 1 ? "Esquerdo(1)" : "Direito(0)")
-            + " [D=" + countRight + " E=" + countLeft + "]");
-      }
-    }
-
-    // 5) Titulares seniors (top-15 por minutagem, exceto modo competitivo)
-    if (!competitive && !jogadores.isEmpty()) {
-      final int TITULARES = Math.min(15, jogadores.size());
-
-      // Ordena por minutos (desc), desempate por minutesPlayed (carreira)
-      ArrayList<int[]> sorted = new ArrayList<>(minutesByIndex);
-      sorted.sort(Comparator
-          .comparingInt((int[] e) -> e[1]).reversed()
-          .thenComparingInt((int[] e) -> e[2]).reversed()
-      );
-
-      if (DEBUG) System.out.println("[DEBUG] Titulares seniors (top " + TITULARES + "):");
-      for (int rank = 0; rank < sorted.size(); rank++) {
-        int[] entry = sorted.get(rank);
-        Object pSenior = jogadores.get(entry[0]);
-        Object nomeJ = getAnyField(pSenior, "a");
-
-        if (rank < TITULARES) {
-          setAnyField(pSenior, 1, "f"); // f=1 = boneco verde (titular)
-          if (DEBUG) System.out.println("[DEBUG]  " + (rank + 1) + ". " + nomeJ
-              + " mins=" + entry[1]
-              + " apps=" + entry[2]);
-        } else {
-          setAnyField(pSenior, 0, "f");
-          if (DEBUG) System.out.println("[DEBUG]  (reserva) " + nomeJ
-              + " mins=" + entry[1]
-              + " apps=" + entry[2]);
+      int leftCount  = 0;
+      int rightCount = 0;
+      for (int idx = 0; idx < allBuiltPlayers.size(); idx++) {
+        if (deferredIndices.contains(idx)) continue; // pula adiados
+        Object sideVal = getAnyField(allBuiltPlayers.get(idx), "i", "lado");
+        if (sideVal instanceof Number) {
+          if (((Number) sideVal).intValue() == 1) leftCount++;
+          else rightCount++;
         }
       }
-    } else if (competitive) {
-      // Modo competitivo: nenhum titular, limita a 25 jogadores
-      for (Object p : jogadores) setAnyField(p, 0, "f");
-      while (jogadores.size() > 25) jogadores.remove(jogadores.size() - 1);
-      if (DEBUG) System.out.println("[DEBUG] competitive: jogadores limitados a " + jogadores.size());
+
+      if (DEBUG) System.out.println("[DEBUG] lado-adiado: esq=" + leftCount + " dir=" + rightCount);
+
+      java.util.Random rndSide = new java.util.Random();
+      for (int[] d : deferredSideEntries) {
+        Object pl = allBuiltPlayers.get(d[0]);
+        int side;
+        if (d[1] == 1) {
+          // Ambidestro sem hint posicional: vai para o lado menos representado no elenco.
+          // Empate → Esquerdo (1). Atualiza contadores para que múltiplos ambidestros
+          // sejam distribuídos de forma equilibrada entre si.
+          side = (leftCount <= rightCount) ? 1 : 0;
+          if (side == 1) leftCount++; else rightCount++;
+        } else {
+          // Sem pé e sem hint posicional: sorteio 50/50
+          side = rndSide.nextBoolean() ? 1 : 0;
+        }
+        setAnyField(pl, side, "i", "lado");
+        if (DEBUG) {
+          Object nomeP = getAnyField(pl, "a");
+          System.out.println("[DEBUG] lado-adiado-resolvido: " + nomeP
+              + " tipo=" + (d[1] == 1 ? "ambidestro" : "sem-pe")
+              + " lado=" + (side == 1 ? "Esquerdo(1)" : "Direito(0)")
+              + " esq=" + leftCount + " dir=" + rightCount);
+        }
+      }
     }
 
+    // Ordena sêniors por minutos DESC — base tanto para titulares quanto para corte competitivo.
+    minutesByIndex.sort((a, b) -> Integer.compare(b[1], a[1]));
+
+    if (competitive) {
+      // ── Modo Competitivo ──────────────────────────────────────────────────────
+      // Regras da liga:
+      //   1. Elenco sênior limitado a 25 jogadores.
+      //   2. Nenhum jogador é marcado como titular (f=0 para todos — sem boneco verde).
+      //
+      // Seleção em dois níveis para evitar que jogadores do sub-20 "roubem" vagas
+      // de jogadores que atuaram pelo time principal na temporada:
+      //
+      //   Nível 1 (prioridade): minutesPlayedSeason > 0 → jogaram pelo sênior esta temporada
+      //                         Ordenados por minutos na temporada DESC.
+      //   Nível 2 (preenchimento): minutesPlayedSeason == 0 → não jogaram pelo sênior
+      //                            (sub-20 ou não utilizados). Entram apenas para completar
+      //                            as 25 vagas restantes, ordenados por minutos de carreira DESC.
+      //
+      // Jogadores jovens que já atuam regularmente pelo sênior (minutesPlayedSeason > 0)
+      // são tratados como Nível 1 normalmente — independente da idade.
+      final int MAX_COMPETITIVE = 25;
+      ArrayList<Object> jogadoresFinal = new ArrayList<>();
+
+      if (anyHasSeasonMins) {
+        // ── Com dados de temporada: separar em dois níveis ───────────────────
+        ArrayList<int[]> nivel1 = new ArrayList<>(); // jogaram pelo sênior esta temporada
+        ArrayList<int[]> nivel2 = new ArrayList<>(); // não jogaram pelo sênior esta temporada
+
+        for (int[] entry : minutesByIndex) {
+          if (entry[1] > 0) nivel1.add(entry); // minutesPlayedSeason > 0
+          else              nivel2.add(entry); // minutesPlayedSeason == 0
+        }
+
+        // nivel1 já está ordenado DESC por season minutes (minutesByIndex foi sorted acima)
+        // nivel2: ordenar por minutos de carreira DESC (entry[2] = minutesPlayed)
+        nivel2.sort((a, b) -> Integer.compare(b[2], a[2]));
+
+        if (DEBUG) {
+          System.out.println("[DEBUG] competitivo nivel1 (jogaram pelo senior esta temporada): " + nivel1.size());
+          System.out.println("[DEBUG] competitivo nivel2 (sem minutos pelo senior): " + nivel2.size());
+        }
+
+        // Preenche até 25: nível 1 primeiro, depois nível 2
+        for (int[] entry : nivel1) {
+          if (jogadoresFinal.size() >= MAX_COMPETITIVE) break;
+          jogadoresFinal.add(jogadores.get(entry[0]));
+          if (DEBUG) {
+            Object nome = getAnyField(jogadores.get(entry[0]), "a");
+            System.out.println("[DEBUG] competitivo N1: " + nome + " seasonMins=" + entry[1]);
+          }
+        }
+        for (int[] entry : nivel2) {
+          if (jogadoresFinal.size() >= MAX_COMPETITIVE) break;
+          jogadoresFinal.add(jogadores.get(entry[0]));
+          if (DEBUG) {
+            Object nome = getAnyField(jogadores.get(entry[0]), "a");
+            System.out.println("[DEBUG] competitivo N2 (preenchimento): " + nome + " careerMins=" + entry[2]);
+          }
+        }
+      } else {
+        // ── Sem dados de temporada: usa top 25 por minutos de carreira ────────
+        for (int k = 0; k < Math.min(MAX_COMPETITIVE, minutesByIndex.size()); k++) {
+          jogadoresFinal.add(jogadores.get(minutesByIndex.get(k)[0]));
+        }
+      }
+
+      jogadores = jogadoresFinal;
+      if (DEBUG) System.out.println("[DEBUG] competitivo: elenco final com "
+          + jogadores.size() + "/" + minutesByIndex.size()
+          + " jogadores (sem marcacao de titulares).");
+    } else {
+      // ── Modo Padrão (individual / por liga) ──────────────────────────────────
+      // Marca os 15 jogadores com mais minutos na temporada como titulares (f=1 = boneco verde).
+      // Jogadores com 0 minutos na temporada ficam com f=0 (reserva).
+      int TITULARES_COUNT = 15;
+      int marked = 0;
+      if (DEBUG) System.out.println("[DEBUG] Titulares (top " + TITULARES_COUNT + " por minutos):");
+      for (int k = 0; k < minutesByIndex.size() && marked < TITULARES_COUNT; k++) {
+        int idx  = minutesByIndex.get(k)[0];
+        int mins = minutesByIndex.get(k)[1];
+
+        if (mins <= 0) break; // demais também serão 0
+
+        setAnyField(jogadores.get(idx), 1, "f"); // f=1 = boneco verde (titular)
+        marked++;
+
+        if (DEBUG) {
+          Object nomeJ = getAnyField(jogadores.get(idx), "a");
+          System.out.println("[DEBUG]  " + marked + ". " + nomeJ + " mins=" + mins);
+        }
+      }
+      if (DEBUG) System.out.println("[DEBUG] Total titulares marcados: " + marked + "/" + TITULARES_COUNT);
+    }
+
+    // 4) Seta jogadores seniors no campo l
     setAnyField(team, jogadores, "l", "jogadores");
 
-    // 5b) Juniores — seleciona top MAX_JUNIORES por minutagem (com desempate)
+    // 5) Seta juniores no campo m:
+    //    - Se o JSON trouxe juniores → seleciona os top-MAX_JUNIORES por minutos
+    //    - Se não trouxe (campo category ausente em todos) → preserva o que estava no template
     if (!juniores.isEmpty()) {
-      ArrayList<int[]> junSorted = new ArrayList<>(juniorStats);
-      junSorted.sort(Comparator
-          .comparingInt((int[] e) -> e[1]).reversed()
-          .thenComparingInt((int[] e) -> e[2]).reversed()
-          .thenComparingInt((int[] e) -> e[3]).reversed()
-      );
+      // Comparator com desempate em cascata:
+      //   1º minutesPlayed (carreira) DESC
+      //   2º matchesPlayed DESC
+      //   3º matchesRelated DESC
+      java.util.Comparator<int[]> junCmp = (a, b) -> {
+        if (b[1] != a[1]) return Integer.compare(b[1], a[1]); // minutesPlayed
+        if (b[2] != a[2]) return Integer.compare(b[2], a[2]); // matchesPlayed
+        return Integer.compare(b[3], a[3]);                   // matchesRelated
+      };
+      juniorStats.sort(junCmp);
 
+      // ── Seleciona os top MAX_JUNIORES ─────────────────────────────────────
       ArrayList<Object> junioresFinal = new ArrayList<>();
-      int rank = 0;
-      for (int[] entry : junSorted) {
-        if (junioresFinal.size() >= MAX_JUNIORES) break;
+      // Usamos Set de índices para controlar quem entrou
+      java.util.Set<Integer> selectedIdx = new java.util.LinkedHashSet<>();
+
+      int junLimit = Math.min(MAX_JUNIORES, juniorStats.size());
+      for (int k = 0; k < junLimit; k++) {
+        selectedIdx.add(juniorStats.get(k)[0]);
+      }
+
+      // ── Garante ao menos 1 goleiro na lista ───────────────────────────────
+      // Verifica se algum dos selecionados é goleiro (pos=0, campo "e")
+      boolean hasGk = false;
+      for (int idx : selectedIdx) {
+        Object posVal = getAnyField(juniores.get(idx), "e", "posicao");
+        if (posVal instanceof Number && ((Number) posVal).intValue() == 0) {
+          hasGk = true;
+          break;
+        }
+      }
+
+      if (!hasGk) {
+        // Procura o melhor goleiro fora da lista atual (já na ordem junCmp)
+        int bestGkIdx = -1;
+        for (int[] entry : juniorStats) {
+          if (selectedIdx.contains(entry[0])) continue; // já está dentro
+          Object posVal = getAnyField(juniores.get(entry[0]), "e", "posicao");
+          if (posVal instanceof Number && ((Number) posVal).intValue() == 0) {
+            bestGkIdx = entry[0];
+            break;
+          }
+        }
+        if (bestGkIdx >= 0) {
+          // Remove o último da lista (pior por critério) e adiciona o goleiro
+          java.util.Iterator<Integer> it = selectedIdx.iterator();
+          int lastIdx = -1;
+          while (it.hasNext()) lastIdx = it.next();
+          if (lastIdx >= 0) {
+            selectedIdx.remove(lastIdx);
+            selectedIdx.add(bestGkIdx);
+            if (DEBUG) {
+              Object gkNome = getAnyField(juniores.get(bestGkIdx), "a");
+              Object rmNome = getAnyField(juniores.get(lastIdx), "a");
+              System.out.println("[DEBUG] junior GK obrigatorio: adicionou " + gkNome
+                  + ", removeu " + rmNome);
+            }
+          }
+        } else {
+          if (DEBUG) System.out.println("[DEBUG] junior: nenhum goleiro disponivel fora do top");
+        }
+      }
+
+      // ── Monta lista final na ordem do comparator ──────────────────────────
+      if (DEBUG) System.out.println("[DEBUG] Juniores selecionados (top " + MAX_JUNIORES + "):");
+      int rank = 1;
+      for (int[] entry : juniorStats) {
+        if (!selectedIdx.contains(entry[0])) continue;
         junioresFinal.add(juniores.get(entry[0]));
         if (DEBUG) {
           Object nomeJ = getAnyField(juniores.get(entry[0]), "a");
-          System.out.println("[DEBUG] junior rank " + (rank + 1) + ": " + nomeJ
+          System.out.println("[DEBUG]  " + rank + ". " + nomeJ
               + " mins=" + entry[1]
               + " apps=" + entry[2]
               + " rel=" + entry[3]);
@@ -294,6 +415,8 @@ public final class BanCompiler {
       for (Object pJun : junioresFinal) {
         if (markedJun >= TITULARES_JUNIORES) break;
         Object nomeJ = getAnyField(pJun, "a");
+        // Pega os minutos do objeto já construído via campo paralelo
+        // (junioresFinal está na mesma ordem do comparator — basta contar)
         setAnyField(pJun, 1, "f"); // f=1 = boneco verde (titular)
         markedJun++;
         if (DEBUG) System.out.println("[DEBUG]  " + markedJun + ". " + nomeJ);
@@ -340,25 +463,8 @@ public final class BanCompiler {
     return new e.t();
   }
 
-  // =========================================================================
-  // applyTeamFromJson — MODIFICADO
-  //
-  // Campos confirmados via análise binária do palmeiras.ban (e.t):
-  //   nome (String) = nome do time
-  //   f    (String) = nome do estádio      → ex.: "Parque Antarctica" / "Allianz Parque"
-  //   g    (int)    = capacidade do estádio → ex.: 27650 (Parque Antarctica, confirmado)
-  //   h    (String) = nome do treinador    → ex.: "Vanderlei Luxemburgo" / "Abel Ferreira"
-  //   c    (int)    = candidato para nacionalidade do treinador (mesmo ID do mapping.json)
-  //
-  // ⚠️ Nota sobre campo `c`:
-  //   Se após o teste a bandeira do treinador não aparecer no Brasfoot, tente
-  //   trocar "c" por "aid" ou "n" na linha de setAnyField abaixo e recompile.
-  // =========================================================================
-  private static void applyTeamFromJson(
-      e.t time, JsonObject root,
-      Integer teamIdOverride, Integer countryIdOverride
-  ) {
-    // ── Nome do time ──────────────────────────────────────────────────────────
+  private static void applyTeamFromJson(e.t time, JsonObject root, Integer teamIdOverride, Integer countryIdOverride) {
+    // Se root == null (schema array puro), mantém nome do template.
     if (root != null) {
       String nome = JsonUtil.getString(root, "team", "displayName");
       if (nome != null && !nome.isBlank()) {
@@ -369,7 +475,6 @@ public final class BanCompiler {
       if (DEBUG) System.out.println("[DEBUG] team.nome=<mantido do template>");
     }
 
-    // ── IDs externos ─────────────────────────────────────────────────────────
     if (teamIdOverride != null) setAnyField(time, teamIdOverride, "id");
 
     if (countryIdOverride != null) {
@@ -377,82 +482,60 @@ public final class BanCompiler {
       setAnyField(time, countryIdOverride, "aid");
     }
 
-    // ── Cores padrão ─────────────────────────────────────────────────────────
     Object cor1 = getAnyField(time, "cor1");
     Object cor2 = getAnyField(time, "cor2");
     if (cor1 == null) setAnyField(time, Color.WHITE, "cor1");
     if (cor2 == null) setAnyField(time, Color.BLACK, "cor2");
 
-    setAnyField(time, Boolean.TRUE,  "valid");
+    setAnyField(time, Boolean.TRUE, "valid");
     setAnyField(time, Boolean.FALSE, "mark");
 
-    // ── NOVOS: estádio, capacidade, treinador, nacionalidade do treinador ─────
+    // ── Estádio, capacidade, treinador e nacionalidade do treinador ──────────
+    // Campos confirmados via análise binária do palmeiras.ban (e.t):
+    //   f (String) = nome do estádio
+    //   g (int)    = capacidade do estádio
+    //   h (String) = nome do treinador
+    //   i (int)    = nacionalidade do treinador (candidato via análise binária)
     if (root != null) {
-      // O scrape.js agora gera:
-      // {
-      //   "team": {
-      //     "stadiumName":      "Allianz Parque",
-      //     "stadiumCapacity":  43713,
-      //     "coachName":        "Abel Ferreira",
-      //     "coachNationality": "Portugal"
-      //   },
-      //   "roster": [ ... jogadores ... ]
-      // }
-      JsonObject teamMeta = null;
-      if (root.has("team") && !root.get("team").isJsonNull()
-          && root.get("team").isJsonObject()) {
-        teamMeta = root.getAsJsonObject("team");
+      String stadiumName = JsonUtil.getString(root, "team", "stadiumName");
+      if (stadiumName != null && !stadiumName.isBlank()) {
+        setAnyField(time, stadiumName, "f");
+        if (DEBUG) System.out.println("[DEBUG] team.f (stadiumName)=" + stadiumName);
       }
 
-      if (teamMeta != null) {
-
-        // f = nome do estádio
-        String stadiumName = JsonUtil.getString(teamMeta, "stadiumName");
-        if (stadiumName != null && !stadiumName.isBlank()) {
-          setAnyField(time, stadiumName, "f");
-          if (DEBUG) System.out.println("[DEBUG] team.f (stadiumName)=" + stadiumName);
-        }
-
-        // g = capacidade do estádio (int)
-        if (teamMeta.has("stadiumCapacity")
-            && !teamMeta.get("stadiumCapacity").isJsonNull()) {
-          try {
-            int capacity = teamMeta.get("stadiumCapacity").getAsInt();
-            if (capacity > 0) {
-              setAnyField(time, capacity, "g");
-              if (DEBUG) System.out.println("[DEBUG] team.g (stadiumCapacity)=" + capacity);
-            }
-          } catch (Exception ex) {
-            if (DEBUG) System.out.println("[DEBUG] team.stadiumCapacity parse error: " + ex.getMessage());
+      JsonElement capEl = JsonUtil.dig(root, "team", "stadiumCapacity");
+      if (capEl != null && !capEl.isJsonNull()) {
+        try {
+          int capacity = capEl.getAsInt();
+          if (capacity > 0) {
+            setAnyField(time, capacity, "g");
+            if (DEBUG) System.out.println("[DEBUG] team.g (stadiumCapacity)=" + capacity);
           }
+        } catch (Exception ex) {
+          if (DEBUG) System.out.println("[DEBUG] team.stadiumCapacity parse error: " + ex.getMessage());
         }
+      }
 
-        // h = nome do treinador
-        String coachName = JsonUtil.getString(teamMeta, "coachName");
-        if (coachName != null && !coachName.isBlank()) {
-          setAnyField(time, coachName, "h");
-          if (DEBUG) System.out.println("[DEBUG] team.h (coachName)=" + coachName);
-        }
+      String coachName = JsonUtil.getString(root, "team", "coachName");
+      if (coachName != null && !coachName.isBlank()) {
+        setAnyField(time, coachName, "h");
+        if (DEBUG) System.out.println("[DEBUG] team.h (coachName)=" + coachName);
+      }
 
-        // c = ID de nacionalidade do treinador (via mapping.json, igual aos jogadores)
-        // ⚠️ Se a bandeira do treinador não aparecer no Brasfoot após o teste,
-        //    troque "c" por "aid" ou "n" e recompile.
-        String coachNat = JsonUtil.getString(teamMeta, "coachNationality");
-        if (coachNat != null && !coachNat.isBlank()) {
-          Integer coachNatId = NationalityUtil.resolveCountryId(coachNat);
-          if (coachNatId != null) {
-            setAnyField(time, coachNatId, "c");
-            if (DEBUG) System.out.println("[DEBUG] team.c (coachNat)=" + coachNat + " → id=" + coachNatId);
-          } else {
-            if (DEBUG) System.out.println("[DEBUG] team.coachNationality não mapeada: " + coachNat);
-          }
+      String coachNat = JsonUtil.getString(root, "team", "coachNationality");
+      if (coachNat != null && !coachNat.isBlank()) {
+        Integer coachNatId = NationalityUtil.resolveCountryId(coachNat);
+        if (coachNatId != null) {
+          setAnyField(time, coachNatId, "i");
+          if (DEBUG) System.out.println("[DEBUG] team.i (coachNat)=" + coachNat + " → id=" + coachNatId);
+        } else {
+          if (DEBUG) System.out.println("[DEBUG] team.coachNationality não mapeada: " + coachNat);
         }
       }
     }
 
     if (DEBUG) {
-      System.out.println("[DEBUG] teamIdOverride=" + teamIdOverride
-          + " countryIdOverride=" + countryIdOverride);
+      System.out.println("[DEBUG] teamIdOverride=" + teamIdOverride + " countryIdOverride=" + countryIdOverride);
     }
   }
 
@@ -571,11 +654,18 @@ public final class BanCompiler {
     }
 
     // top2[2] = resolvedPos calculado pelo HeuristicsEngine.
+    // Para posições específicas, resolvedPos == pos (sem efeito prático).
+    // Para posições genéricas ("Defensor", "Meio-Campo", etc.), pode diferir:
+    // ex.: "Defensor" que sorteia perfil LAT_OF recebe resolvedPos=1 (Lateral),
+    // garantindo que a posição no .ban esteja alinhada com a característica.
+    // A sobrescrita só ocorre quando há diferença real, evitando setAnyField
+    // desnecessário e deixando explícito que mudança de posição é caso excepcional.
     int resolvedPos = (top2.length >= 3) ? top2[2] : pos;
     if (resolvedPos != pos) {
       if (DEBUG) {
         System.out.println("[DEBUG] Posição ajustada para " + nome
-            + ": pos original=" + pos + " → resolvedPos=" + resolvedPos);
+            + ": pos original=" + pos + " → resolvedPos=" + resolvedPos
+            + " (posição genérica resolvida por característica sorteada)");
       }
       setAnyField(p, resolvedPos, "e", "posicao");
     }
@@ -613,29 +703,62 @@ public final class BanCompiler {
    * Determina se o lado do jogador deve ser resolvido de forma adiada (após processar
    * todo o elenco), analisando diretamente o texto da posição — sem usar pi.sideHint,
    * que pode retornar valor não-nulo mesmo para posições que não implicam lado.
+   *
+   * <p>Tipos de retorno:
+   * <ul>
+   *   <li>0 (normal)  – pé definido (esq/dir) OU posição implica lado → SideResolver decide.</li>
+   *   <li>1 (ambidestro-sem-hint) – foot=ambidestro E posição sem dica de lado →
+   *       vai para o lado com menos jogadores no elenco.</li>
+   *   <li>2 (sem-pé-sem-hint) – foot ausente/desconhecido E posição sem dica de lado →
+   *       sorteio 50/50.</li>
+   * </ul>
    */
-  private static boolean shouldDeferSide(String foot, String posText) {
-    if (positionImpliesSide(posText)) return false;
-    // Pé ambíguo (ambidestro ou null) + posição neutra → adiar
-    if (foot == null || foot.isBlank()) return true;
+  private static int getSideDeferralType(String foot, String posText) {
+    if (positionImpliesSide(posText)) return 0; // posição indica lado → SideResolver resolve
+
+    // Posição neutra: analisa o pé
+    if (foot == null || foot.isBlank()) return 2; // sem pé e sem hint
+
     String f = foot.trim().toLowerCase(java.util.Locale.ROOT);
-    return f.equals("ambidestro") || f.equals("both") || f.equals("ambi");
+    if (f.equals("ambidestro") || f.equals("both") || f.equals("ambidextrous")) return 1;
+    if (f.equals("direito") || f.equals("right")
+        || f.equals("esquerdo") || f.equals("left")) return 0;
+
+    // Valores não reconhecidos ("unknown", "-", etc.) → trata como sem pé
+    return 2;
   }
 
+  /**
+   * Retorna true se o foot for um valor explícito reconhecido (direito ou esquerdo),
+   * excluindo ambidestro e valores nulos/desconhecidos.
+   */
   private static boolean isExplicitFoot(String foot) {
     if (foot == null || foot.isBlank()) return false;
     String f = foot.trim().toLowerCase(java.util.Locale.ROOT);
-    return f.contains("direit") || f.contains("esquerd") || f.equals("right") || f.equals("left");
+    return f.equals("direito") || f.equals("right")
+        || f.equals("esquerdo") || f.equals("left");
   }
 
+  /**
+   * Mapeia pé explícito diretamente para o lado do Brasfoot.
+   * Regra: pé direito → 0 (Direito), pé esquerdo → 1 (Esquerdo).
+   * Só deve ser chamado quando isExplicitFoot() retornar true.
+   */
   private static int resolveExplicitFootSide(String foot) {
     String f = (foot == null) ? "" : foot.trim().toLowerCase(java.util.Locale.ROOT);
     return (f.equals("esquerdo") || f.equals("left")) ? 1 : 0;
   }
 
+  /**
+   * Retorna true se o texto de posição indicar explicitamente um lado (esquerdo ou direito).
+   * Analisa o texto normalizado (sem acentos, minúsculas) procurando por termos que
+   * implicam lado — ex: "lateral esq", "ponta dir", "lw", "rw".
+   * Posições neutras como "Atacante", "Zagueiro", "Volante" retornam false.
+   */
   private static boolean positionImpliesSide(String posText) {
     if (posText == null || posText.isBlank()) return false;
 
+    // Normaliza: remove acentos usando Character category (sem regex)
     String norm = java.text.Normalizer.normalize(posText, java.text.Normalizer.Form.NFD);
     StringBuilder sb = new StringBuilder();
     for (char c : norm.toCharArray()) {
@@ -654,6 +777,7 @@ public final class BanCompiler {
     if (p.contains("meia esq")    || p.contains("meia dir"))    return true;
     if (p.contains("ala esq")     || p.contains("ala dir"))     return true;
     if (p.contains("extremo esq") || p.contains("extremo dir")) return true;
+    // Winger abreviado como token isolado
     if (p.equals("lw") || p.equals("rw"))           return true;
     if (p.startsWith("lw ") || p.startsWith("rw ")) return true;
     if (p.endsWith(" lw") || p.endsWith(" rw"))     return true;
@@ -687,8 +811,7 @@ public final class BanCompiler {
   }
 
   private static void writeSerialized(Path file, Object obj) throws IOException {
-    try (ObjectOutputStream oos = new ObjectOutputStream(
-        new BufferedOutputStream(Files.newOutputStream(file)))) {
+    try (ObjectOutputStream oos = new ObjectOutputStream(new BufferedOutputStream(Files.newOutputStream(file)))) {
       oos.writeObject(obj);
       oos.flush();
     }
