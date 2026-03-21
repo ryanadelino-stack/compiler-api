@@ -470,8 +470,8 @@ public final class BanCompiler {
   private static boolean isValidTmName(String s) {
     if (s == null || s.isBlank()) return false;
     String t = s.trim();
-    // Rejeita placeholders conhecidos do TM: "-", "—", "+-0", "?", "N/A", "n/a"
-    if (t.matches("[-–—+\-0?]+")) return false;
+    // Rejeita placeholders conhecidos do TM: "-", "—", "+-0", "?", "N/A"
+    if (t.matches("[-–—0+?]+")) return false;
     if (t.equalsIgnoreCase("n/a") || t.equalsIgnoreCase("na")) return false;
     // Deve ter ao menos 2 caracteres alfabéticos
     long alphaCount = t.chars().filter(Character::isLetter).count();
