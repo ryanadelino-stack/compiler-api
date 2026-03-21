@@ -463,7 +463,22 @@ public final class BanCompiler {
     return new e.t();
   }
 
-  private static void applyTeamFromJson(e.t time, JsonObject root, Integer teamIdOverride, Integer countryIdOverride) {
+  /**
+   * Verifica se um nome vindo do TM é válido para sobrescrever o template.
+   * Rejeita: null, blank, apenas traços/hífens, "+-0", "?" e variantes.
+   */
+  private static boolean isValidTmName(String s) {
+    if (s == null || s.isBlank()) return false;
+    String t = s.trim();
+    // Rejeita placeholders conhecidos do TM: "-", "—", "+-0", "?", "N/A", "n/a"
+    if (t.matches("[-–—+\-0?]+")) return false;
+    if (t.equalsIgnoreCase("n/a") || t.equalsIgnoreCase("na")) return false;
+    // Deve ter ao menos 2 caracteres alfabéticos
+    long alphaCount = t.chars().filter(Character::isLetter).count();
+    return alphaCount >= 2;
+  }
+
+    private static void applyTeamFromJson(e.t time, JsonObject root, Integer teamIdOverride, Integer countryIdOverride) {
     // Se root == null (schema array puro), mantém nome do template.
     if (root != null) {
       String nome = JsonUtil.getString(root, "team", "displayName");
@@ -498,9 +513,11 @@ public final class BanCompiler {
     //   i (int)    = nacionalidade do treinador (candidato via análise binária)
     if (root != null) {
       String stadiumName = JsonUtil.getString(root, "team", "stadiumName");
-      if (stadiumName != null && !stadiumName.isBlank()) {
+      if (isValidTmName(stadiumName)) {
         setAnyField(time, stadiumName, "f");
         if (DEBUG) System.out.println("[DEBUG] team.f (stadiumName)=" + stadiumName);
+      } else {
+        if (DEBUG) System.out.println("[DEBUG] team.f mantido do template (inválido: " + stadiumName + ")");
       }
 
       JsonElement capEl = JsonUtil.dig(root, "team", "stadiumCapacity");
@@ -510,16 +527,22 @@ public final class BanCompiler {
           if (capacity > 0) {
             setAnyField(time, capacity, "g");
             if (DEBUG) System.out.println("[DEBUG] team.g (stadiumCapacity)=" + capacity);
+          } else {
+            if (DEBUG) System.out.println("[DEBUG] team.g mantido do template (capacity <= 0)");
           }
         } catch (Exception ex) {
           if (DEBUG) System.out.println("[DEBUG] team.stadiumCapacity parse error: " + ex.getMessage());
         }
+      } else {
+        if (DEBUG) System.out.println("[DEBUG] team.g mantido do template (null)");
       }
 
       String coachName = JsonUtil.getString(root, "team", "coachName");
-      if (coachName != null && !coachName.isBlank()) {
+      if (isValidTmName(coachName)) {
         setAnyField(time, coachName, "h");
         if (DEBUG) System.out.println("[DEBUG] team.h (coachName)=" + coachName);
+      } else {
+        if (DEBUG) System.out.println("[DEBUG] team.h mantido do template (inválido: " + coachName + ")");
       }
 
       String coachNat = JsonUtil.getString(root, "team", "coachNationality");
