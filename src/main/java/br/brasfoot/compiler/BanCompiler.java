@@ -555,6 +555,28 @@ public final class BanCompiler {
           if (DEBUG) System.out.println("[DEBUG] team.coachNationality não mapeada: " + coachNat);
         }
       }
+
+      // ── Nível do clube (1-25) ─────────────────────────────────────────────
+      // Calculado pelo scrape.js via leagues.json + classificação do Transfermarkt.
+      // Chega no JSON como: { "team": { "level": 16, ... }, "roster": [...] }
+      // Campo "c" em e.t confirmado como exclusivo do nível (campo "c" em e.g é
+      // a nacionalidade do jogador — objetos diferentes, sem conflito).
+      JsonElement nivelEl = JsonUtil.dig(root, "team", "level");
+      if (nivelEl != null && !nivelEl.isJsonNull()) {
+        try {
+          int nivel = nivelEl.getAsInt();
+          if (nivel >= 1 && nivel <= 25) {
+            setAnyField(time, nivel, "c");
+            if (DEBUG) System.out.println("[DEBUG] team.c (nivel)=" + nivel);
+          } else {
+            if (DEBUG) System.out.println("[DEBUG] team.level fora do range 1-25: " + nivel + " — ignorado");
+          }
+        } catch (Exception ex) {
+          if (DEBUG) System.out.println("[DEBUG] team.level parse error: " + ex.getMessage());
+        }
+      } else {
+        if (DEBUG) System.out.println("[DEBUG] team.c (nivel) mantido do template (ausente no JSON)");
+      }
     }
 
     if (DEBUG) {
