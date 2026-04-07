@@ -159,13 +159,42 @@ public final class BanCompiler {
               stJ.matchesPlayed,
               stJ.matchesRelated
           });
+
+          // ── Desenvolvimento (campo "hash" em e.g) ──────────────────────────
+          // O Brasfoot usa este campo para calcular CPE e Valor Estimado dos
+          // jogadores da Academia. Se hash=0, o jogo trata o jogador como tendo
+          // 0% de desenvolvimento → sem CPE, sem Valor Estimado.
+          //
+          // Escala observada no editor: 1-10 (cada unidade ≈ 10% desenvolvimento).
+          // Fórmula determinística baseada nos dados do Transfermarkt:
+          //   base   = 5  (50% — piso razoável para jogador de academia profissional)
+          //   +youth = bônus por juventude: sub-17 → +2, sub-18 → +1, sub-19/20 → 0
+          //   +xp    = bônus por minutagem acumulada: cada 1.000 min → +1 (máx +3)
+          //   +apps  = bônus residual por partidas: cada 15 partidas → +1 (máx +1)
+          //   resultado: clamp [3, 10]
+          //
+          // Exemplos:
+          //   16 anos, 3.000 min → 5+2+3+1 = 10 (100%)
+          //   18 anos, 1.500 min → 5+1+1+1 = 8  (80%)
+          //   20 anos,   500 min → 5+0+0+1 = 6  (60%)
+          //   20 anos,     0 min → 5+0+0+0 = 5  (50%)
+          Integer idadeJ = JsonUtil.getInt(pj, "age");
+          int ageJ = (idadeJ != null) ? idadeJ : 19;
+          int youthBonus = (ageJ <= 16) ? 2 : (ageJ <= 17) ? 1 : 0;
+          int xpBonus    = Math.min(3, stJ.minutesPlayed / 1000);
+          int appsBonus  = Math.min(1, stJ.matchesPlayed / 15);
+          int desenvolvimento = Math.max(3, Math.min(10, 5 + youthBonus + xpBonus + appsBonus));
+          setAnyField(p, desenvolvimento, "hash");
+
           juniores.add(p);
           if (DEBUG) {
             Object nomeJ = getAnyField(p, "a");
             System.out.println("[DEBUG] junior: " + nomeJ
                 + " mins=" + stJ.minutesPlayed
                 + " apps=" + stJ.matchesPlayed
-                + " rel=" + stJ.matchesRelated);
+                + " rel=" + stJ.matchesRelated
+                + " age=" + ageJ
+                + " desenvolvimento=" + desenvolvimento + "/10");
           }
         } else {
           // Senior: registra minutos para seleção de titulares
