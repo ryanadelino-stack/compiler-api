@@ -237,14 +237,31 @@ public final class BanCompiler {
         Object pl = allBuiltPlayers.get(d[0]);
         int side;
         if (d[1] == 1) {
-          // Ambidestro sem hint posicional: vai para o lado menos representado no elenco.
-          // Empate → Esquerdo (1). Atualiza contadores para que múltiplos ambidestros
-          // sejam distribuídos de forma equilibrada entre si.
-          side = (leftCount <= rightCount) ? 1 : 0;
+          // Ambidestro sem hint posicional: distribui respeitando a proporção
+          // realista do futebol (~80% destros, ~20% canhotos).
+          // Calcula quantos canhotos ainda cabem no elenco para chegar em 20%.
+          int total = leftCount + rightCount + 1; // +1 contando o próprio jogador
+          double currentLeftRatio = (leftCount + 1.0) / total;
+          side = (currentLeftRatio <= 0.20) ? 1 : 0; // canhoto se ainda abaixo de 20%
           if (side == 1) leftCount++; else rightCount++;
         } else {
-          // Sem pé e sem hint posicional: sorteio 50/50
-          side = rndSide.nextBoolean() ? 1 : 0;
+          // Sem pé e sem hint posicional: sorteio ponderado 80% destro / 20% canhoto,
+          // ajustado dinamicamente para que o elenco não ultrapasse 25% de canhotos.
+          // A proporção real no futebol profissional é ~80% destros, ~20% canhotos.
+          int total = leftCount + rightCount + 1;
+          double currentLeftRatio = (double) leftCount / (total - 1 > 0 ? total - 1 : 1);
+          double leftProb;
+          if (currentLeftRatio < 0.15) {
+            leftProb = 0.30; // ainda poucos canhotos → mais chance de sair canhoto
+          } else if (currentLeftRatio < 0.20) {
+            leftProb = 0.20; // faixa ideal → probabilidade nominal
+          } else if (currentLeftRatio < 0.25) {
+            leftProb = 0.10; // já perto do limite → reduz probabilidade
+          } else {
+            leftProb = 0.02; // acima de 25% → praticamente zera (só casos extremos)
+          }
+          side = (rndSide.nextDouble() < leftProb) ? 1 : 0;
+          if (side == 1) leftCount++; else rightCount++;
         }
         setAnyField(pl, side, "i", "lado");
         if (DEBUG) {
@@ -261,10 +278,10 @@ public final class BanCompiler {
     // Detecta elencos com proporção anormalmente alta de jogadores do lado
     // direito — sintoma de ligas com dados incompletos no Transfermarkt, onde
     // todos os jogadores sem dado de pé explícito chegam como "direito" por
-    // default. Quando >85% dos jogadores de campo são destros, parte deles
+    // default. Quando >88% dos jogadores de campo são destros, parte deles
     // em posições neutras (Zagueiro=2, Meia/Volante=3, Atacante=4)
-    // é convertida para esquerdo até atingir ~75% de destros, que é a
-    // proporção realista no futebol profissional.
+    // é convertida para esquerdo até atingir ~80% de destros, que é a
+    // proporção realista no futebol profissional (~80% destros, ~20% canhotos).
     //
     // Posições com implicação de lado (Lateral=1) e Goleiros (0) não são tocados.
     // A conversão começa pelos menos utilizados (cauda da lista) para preservar
@@ -284,17 +301,18 @@ public final class BanCompiler {
       }
 
       int totalField = fieldRight + fieldLeft;
-      // Só intervém quando: ≥10 jogadores de campo E >85% destros
+      // Só intervém quando: ≥10 jogadores de campo E >88% destros
       if (totalField >= 10) {
         double rightRatio = (double) fieldRight / totalField;
-        if (rightRatio > 0.85) {
-          int targetRight = (int) Math.round(totalField * 0.75);
+        if (rightRatio > 0.88) {
+          // Converte até atingir ~80% de destros (proporção realista no futebol)
+          int targetRight = (int) Math.round(totalField * 0.80);
           int toFlip = fieldRight - targetRight;
 
           if (toFlip > 0) {
             if (DEBUG) System.out.println("[DEBUG] rebalance-lado: " + fieldRight + "/"
                 + totalField + " destros (" + String.format("%.0f", rightRatio * 100)
-                + "%) → convertendo " + toFlip + " para esquerdo");
+                + "%) → convertendo " + toFlip + " para esquerdo (alvo 80%)");
 
             int flipped = 0;
             for (int idx = allBuiltPlayers.size() - 1; idx >= 0 && flipped < toFlip; idx--) {
