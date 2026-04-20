@@ -133,7 +133,7 @@
     { "id": 88, "nome": "Hungria", "aliases": ["Hungary"] },
     { "id": 89, "nome": "Iêmen", "aliases": ["Yemen", "Iemen"] },
     { "id": 90, "nome": "Ilhas Cayman", "aliases": ["Cayman Islands"] },
-    { "id": 91, "nome": "Ilhas Cook", "aliases": ["Cook Islands"] },
+    { "id": 91, "nome": "Ilhas Cook", "aliases": ["Cook Islands", "Cookinseln"] },
     { "id": 92, "nome": "Ilhas Faroe", "aliases": ["Faroe Islands", "Faeroe Islands"] },
     { "id": 93, "nome": "Ilhas Salomão", "aliases": ["Solomon Islands"] },
     { "id": 94, "nome": "Ilhas Virgens Britânicas", "aliases": ["British Virgin Islands"] },
