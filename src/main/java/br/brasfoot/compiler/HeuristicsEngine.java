@@ -1282,6 +1282,61 @@ public final class HeuristicsEngine {
     int first  = sorted.get(0).getKey();
     int second = sorted.get(1).getKey();
 
+    // ── Limiar de baixa confiança ─────────────────────────────────────────────
+    // Quando o score total do par vencedor está abaixo do threshold, os dados
+    // são insuficientes para uma escolha determinística confiável — a diferença
+    // entre os pares concorrentes é tão pequena que o resultado seria
+    // arbitrário de qualquer forma (ex.: Arm/Vel=65 vs Arm/Dri=60 para um
+    // jogador com mp=11 e nenhum gol/assist).
+    //
+    // Nesse caso, sorteamos um par válido do pool do perfil, ponderado por score.
+    // Isso garante variedade natural entre jogadores de ligas com dados escassos
+    // sem afetar jogadores bem documentados (cujos scores estão bem acima do limiar).
+    //
+    // Thresholds por grupo (empiricamente calibrados):
+    //   Goleiro      → 80  (4 características com tetos altos)
+    //   Defensor     → 60
+    //   Meia/Volante → 70  (scoreVelMeia dá +30 só pela idade — cria "magneto")
+    //   Atacante     → 65
+    final double LOW_CONF_THRESHOLD;
+    if (pos == 0) LOW_CONF_THRESHOLD = 80;
+    else if (pos == 1 || pos == 2) LOW_CONF_THRESHOLD = 60;
+    else if (pos == 3) LOW_CONF_THRESHOLD = 70;
+    else LOW_CONF_THRESHOLD = 65;
+
+    double winScore = scores.getOrDefault(first, 0.0) + scores.getOrDefault(second, 0.0);
+
+    if (winScore < LOW_CONF_THRESHOLD) {
+      Set<String> allowedForConf = getAllowedCombinations(profile);
+      List<String> candidates = new ArrayList<>();
+      List<Double> weights   = new ArrayList<>();
+
+      for (String pair : allowedForConf) {
+        int[] idx = parseCharPair(pair);
+        if (idx == null || idx.length < 2) continue;
+        double s = scores.getOrDefault(idx[0], 0.0) + scores.getOrDefault(idx[1], 0.0);
+        candidates.add(pair);
+        weights.add(Math.max(s, 1.0)); // peso mínimo 1 para garantir diversidade
+      }
+
+      if (!candidates.isEmpty()) {
+        double totalWeight = weights.stream().mapToDouble(Double::doubleValue).sum();
+        double roll = new Random().nextDouble() * totalWeight;
+        double acc  = 0;
+        String chosen = candidates.get(0);
+        for (int k = 0; k < candidates.size(); k++) {
+          acc += weights.get(k);
+          if (roll <= acc) { chosen = candidates.get(k); break; }
+        }
+        int[] pair = parseCharPair(chosen);
+        if (DEBUG) System.out.println("[DEBUG] Low-confidence [" + profile
+            + "] score=" + winScore + "<" + LOW_CONF_THRESHOLD
+            + " → sorteio ponderado: " + chosen);
+        return new int[]{ pair[0], pair[1], resolvedPos };
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Valida contra a lista de pares permitidos para o perfil
     Set<String> allowed = getAllowedCombinations(profile);
     String pair1 = idxToName(first) + "/" + idxToName(second);
