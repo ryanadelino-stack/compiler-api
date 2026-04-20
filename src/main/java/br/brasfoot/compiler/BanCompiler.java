@@ -237,28 +237,29 @@ public final class BanCompiler {
         Object pl = allBuiltPlayers.get(d[0]);
         int side;
         if (d[1] == 1) {
-          // Ambidestro sem hint posicional: distribui respeitando a proporção
-          // realista do futebol (~80% destros, ~20% canhotos).
-          // Calcula quantos canhotos ainda cabem no elenco para chegar em 20%.
-          int total = leftCount + rightCount + 1; // +1 contando o próprio jogador
-          double currentLeftRatio = (leftCount + 1.0) / total;
-          side = (currentLeftRatio <= 0.20) ? 1 : 0; // canhoto se ainda abaixo de 20%
-          if (side == 1) leftCount++; else rightCount++;
+          // Ambidestro sem hint posicional: sempre vai para o lado ESQUERDO.
+          // No Brasfoot, o jogador canhoto se comporta melhor atuando pelo lado
+          // direito do que um destro pelo lado esquerdo — ambidestros como esquerdo
+          // maximizam a cobertura tática do elenco sem penalidade de desempenho.
+          side = 1; // sempre esquerdo
+          leftCount++;
         } else {
-          // Sem pé e sem hint posicional: sorteio ponderado 80% destro / 20% canhoto,
-          // ajustado dinamicamente para que o elenco não ultrapasse 25% de canhotos.
-          // A proporção real no futebol profissional é ~80% destros, ~20% canhotos.
+          // Sem pé e sem hint posicional: sorteio ponderado dinâmico.
+          // Alvo: ~25% canhotos (mais que os 20% anteriores para cobrir posições
+          // onde um time inteiro ficava com o mesmo lado).
+          // A probabilidade cai progressivamente conforme o elenco acumula canhotos,
+          // garantindo que não ultrapasse ~33% mesmo no pior caso.
           int total = leftCount + rightCount + 1;
           double currentLeftRatio = (double) leftCount / (total - 1 > 0 ? total - 1 : 1);
           double leftProb;
-          if (currentLeftRatio < 0.15) {
-            leftProb = 0.30; // ainda poucos canhotos → mais chance de sair canhoto
-          } else if (currentLeftRatio < 0.20) {
-            leftProb = 0.20; // faixa ideal → probabilidade nominal
+          if (currentLeftRatio < 0.20) {
+            leftProb = 0.40; // ainda poucos canhotos → probabilidade elevada
           } else if (currentLeftRatio < 0.25) {
-            leftProb = 0.10; // já perto do limite → reduz probabilidade
+            leftProb = 0.25; // faixa ideal → probabilidade nominal
+          } else if (currentLeftRatio < 0.33) {
+            leftProb = 0.12; // próximo do limite → reduz
           } else {
-            leftProb = 0.02; // acima de 25% → praticamente zera (só casos extremos)
+            leftProb = 0.03; // acima de 33% → praticamente zera
           }
           side = (rndSide.nextDouble() < leftProb) ? 1 : 0;
           if (side == 1) leftCount++; else rightCount++;
@@ -275,24 +276,30 @@ public final class BanCompiler {
     }
 
     // ── Rebalanceamento de lado (pós-atribuição completa) ─────────────────────
-    // Detecta elencos com proporção anormalmente alta de jogadores do lado
-    // direito — sintoma de ligas com dados incompletos no Transfermarkt, onde
-    // todos os jogadores sem dado de pé explícito chegam como "direito" por
-    // default. Quando >88% dos jogadores de campo são destros, parte deles
-    // em posições neutras (Zagueiro=2, Meia/Volante=3, Atacante=4)
-    // é convertida para esquerdo até atingir ~80% de destros, que é a
-    // proporção realista no futebol profissional (~80% destros, ~20% canhotos).
+    // Aplica SOMENTE a jogadores cujo lado foi resolvido pelo sorteio adiado
+    // (pé nulo ou ambidestro sem hint posicional). Jogadores com pé explícito
+    // (direito/esquerdo) ou posição com implicação de lado (Lateral Esq/Dir,
+    // Ponta Esq/Dir, etc.) NUNCA são tocados — o dado explícito é sempre
+    // preservado.
     //
-    // Posições com implicação de lado (Lateral=1) e Goleiros (0) não são tocados.
-    // A conversão começa pelos menos utilizados (cauda da lista) para preservar
-    // os titulares com dado de pé mais confiável.
+    // Detecta elencos com proporção anormalmente alta de destros mesmo após o
+    // sorteio (ex: muitos jogadores sem pé que caíram em destro por probabilidade)
+    // e converte alguns deles para esquerdo até atingir ~75%.
     {
+      // Conjunto de índices que passaram pelo sorteio adiado (tipo 2 = sem-pé)
+      // — apenas estes são candidatos ao rebalanceamento.
+      java.util.Set<Integer> deferredNoPeIndices = new java.util.HashSet<>();
+      for (int[] d : deferredSideEntries) {
+        if (d[1] == 2) deferredNoPeIndices.add(d[0]); // tipo 2 = sem-pé
+      }
+
+      // Contagem de destros/canhotos entre TODOS os jogadores de campo
+      // (para avaliar se o elenco inteiro está desequilibrado)
       int fieldRight = 0, fieldLeft = 0;
       for (Object pl : allBuiltPlayers) {
         Object posObj = getAnyField(pl, "e", "posicao");
         int posCode = (posObj instanceof Number) ? ((Number) posObj).intValue() : -1;
         if (posCode == 0) continue; // Goleiro — não conta
-
         Object sideVal = getAnyField(pl, "i", "lado");
         if (sideVal instanceof Number) {
           if (((Number) sideVal).intValue() == 1) fieldLeft++;
@@ -301,23 +308,23 @@ public final class BanCompiler {
       }
 
       int totalField = fieldRight + fieldLeft;
-      // Só intervém quando: ≥10 jogadores de campo E >88% destros
       if (totalField >= 10) {
         double rightRatio = (double) fieldRight / totalField;
-        if (rightRatio > 0.88) {
-          // Converte até atingir ~80% de destros (proporção realista no futebol)
-          int targetRight = (int) Math.round(totalField * 0.80);
+        if (rightRatio > 0.85) {
+          int targetRight = (int) Math.round(totalField * 0.75);
           int toFlip = fieldRight - targetRight;
 
           if (toFlip > 0) {
             if (DEBUG) System.out.println("[DEBUG] rebalance-lado: " + fieldRight + "/"
                 + totalField + " destros (" + String.format("%.0f", rightRatio * 100)
-                + "%) → convertendo " + toFlip + " para esquerdo (alvo 80%)");
+                + "%) → convertendo até " + toFlip + " para esquerdo (alvo 75%, só sem-pé)");
 
             int flipped = 0;
             for (int idx = allBuiltPlayers.size() - 1; idx >= 0 && flipped < toFlip; idx--) {
-              Object pl = allBuiltPlayers.get(idx);
+              // GUARDA PRINCIPAL: só converte jogadores sem pé explícito
+              if (!deferredNoPeIndices.contains(idx)) continue;
 
+              Object pl = allBuiltPlayers.get(idx);
               Object posObj = getAnyField(pl, "e", "posicao");
               int posCode = (posObj instanceof Number) ? ((Number) posObj).intValue() : -1;
               // Só posições neutras: Zagueiro(2), Meia/Volante(3), Atacante(4)
@@ -332,12 +339,13 @@ public final class BanCompiler {
               if (DEBUG) {
                 Object nomeP = getAnyField(pl, "a");
                 System.out.println("[DEBUG] rebalance-lado: converteu " + nomeP
-                    + " pos=" + posCode + " Direito→Esquerdo");
+                    + " pos=" + posCode + " Direito→Esquerdo (era sem-pé)");
               }
             }
 
             if (DEBUG) System.out.println("[DEBUG] rebalance-lado: concluído, "
-                + flipped + " conversões realizadas");
+                + flipped + " conversões realizadas de " + deferredNoPeIndices.size()
+                + " candidatos sem-pé");
           }
         }
       }
