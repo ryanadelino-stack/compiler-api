@@ -429,15 +429,15 @@ public final class HeuristicsEngine {
     // Goleiros muito altos (>= 1.92m) perdem reflexo lateral mais cedo
     // Goleiros de altura normal: longevidade maior, escala estendida até 37
     if (m.height >= 1.92) {
-      if (m.age != null && m.age <= 25)      pontos += 30;
-      else if (m.age != null && m.age <= 27) pontos += 18;
-      else if (m.age != null && m.age <= 29) pontos += 8;
+      if (m.age != null && m.age > 0 && m.age <= 25)      pontos += 30;
+      else if (m.age != null && m.age > 0 && m.age <= 27) pontos += 18;
+      else if (m.age != null && m.age > 0 && m.age <= 29) pontos += 8;
     } else {
-      if (m.age != null && m.age <= 25)      pontos += 30;
-      else if (m.age != null && m.age <= 28) pontos += 22;
-      else if (m.age != null && m.age <= 31) pontos += 14;
-      else if (m.age != null && m.age <= 34) pontos += 8;
-      else if (m.age != null && m.age <= 37) pontos += 4;
+      if (m.age != null && m.age > 0 && m.age <= 25)      pontos += 30;
+      else if (m.age != null && m.age > 0 && m.age <= 28) pontos += 22;
+      else if (m.age != null && m.age > 0 && m.age <= 31) pontos += 14;
+      else if (m.age != null && m.age > 0 && m.age <= 34) pontos += 8;
+      else if (m.age != null && m.age > 0 && m.age <= 37) pontos += 4;
     }
     if (m.cleanSheetRate >= 0.35) pontos += 12;
     else if (m.cleanSheetRate >= 0.28) pontos += 7;
@@ -558,8 +558,8 @@ public final class HeuristicsEngine {
 
   private static double scoreVelZag(Metrics m) {
     double pontos = 0;
-    if (m.age != null && m.age <= 27) pontos += 30;
-    if (m.height <= 1.85) pontos += 20;
+    if (m.age != null && m.age > 0 && m.age <= 27) pontos += 30;
+    if (m.height > 0 && m.height <= 1.85) pontos += 20;
     if (m.assistsPerGame >= 0.03) pontos += 20;
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
       pontos += 20;
@@ -744,8 +744,8 @@ public final class HeuristicsEngine {
     // Threshold mais rigoroso: apenas volantes muito jovens (<=25) recebem bônus máximo.
     // Entre 26-27 o bônus cai pela metade, evitando que Des/Vel apareça por padrão
     // em qualquer jovem com participação razoável.
-    if (m.age != null && m.age <= 25) pontos += 30;
-    else if (m.age != null && m.age <= 27) pontos += 15;
+    if (m.age != null && m.age > 0 && m.age <= 25) pontos += 30;
+    else if (m.age != null && m.age > 0 && m.age <= 27) pontos += 15;
     if (m.participationPerGame >= 0.10) pontos += 25;
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia")))
       pontos += 20;
@@ -788,9 +788,14 @@ public final class HeuristicsEngine {
 
   private static double scoreVelMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
-    if (m.age != null && m.age <= 27) pontos += 30;
+    // Guard age > 0: age=0 no JSON significa "não cadastrado" — não deve
+    // disparar o bônus de "jovem" que contamina a distribuição de características
+    // em ligas com dados escassos (ex: Nova Zelândia).
+    if (m.age != null && m.age > 0 && m.age <= 27) pontos += 30;
     if (m.participationPerGame >= 0.15) pontos += 25;
-    if (m.height <= 1.78) pontos += 20;
+    // Guard height > 0: height=null no JSON vira 0.0 em double Java,
+    // e 0.0 <= 1.78 seria TRUE — dando bônus de "baixo" para todos sem dado.
+    if (m.height > 0 && m.height <= 1.78) pontos += 20;
     if (ofensivo) pontos += 15;
     return pontos;
   }
@@ -803,8 +808,9 @@ public final class HeuristicsEngine {
     // jogadores realmente dominantes em participação.
     if (m.participationPerGame >= 0.25) pontos += 35;
     else if (m.participationPerGame >= 0.20) pontos += 20;
-    if (m.age != null && m.age <= 28) pontos += 25;
-    if (m.height <= 1.75) pontos += 20;
+    // Guards age > 0 e height > 0: mesma razão que scoreVelMeia.
+    if (m.age != null && m.age > 0 && m.age <= 28) pontos += 25;
+    if (m.height > 0 && m.height <= 1.75) pontos += 20;
     if (m.assistsPerGame >= 0.10) pontos += 20;
     // Penalidade para meia ofensivo goleador antecipada de 0.15 → 0.12:
     // meias com perfil goleador moderado (gpg >= 0.12) já têm Fin/Arm como
@@ -861,12 +867,12 @@ public final class HeuristicsEngine {
 
   private static double scoreVelAtac(Metrics m, boolean ponta, boolean centroavante) {
     double pontos = 0;
-    if (m.age != null && m.age <= 28) pontos += 35;
+    if (m.age != null && m.age > 0 && m.age <= 28) pontos += 35;
     if (ponta) pontos += 30;
-    if (m.height <= 1.80) pontos += 20;
+    if (m.height > 0 && m.height <= 1.80) pontos += 20;
     if (m.participationPerGame >= 0.25) pontos += 15;
-    if (centroavante && m.age != null && m.age <= 25) pontos += 25;
-    if (ponta && m.assistsPerGame >= 0.10 && m.height <= 1.78) pontos -= 15;
+    if (centroavante && m.age != null && m.age > 0 && m.age <= 25) pontos += 25;
+    if (ponta && m.assistsPerGame >= 0.10 && m.height > 0 && m.height <= 1.78) pontos -= 15;
     // Ponta scorer-dominante (gpg >= 0.15 e mais gols que assists): Vel é o melhor
     // par secundário com Fin. Sem este bônus, Dri vencia o slot apesar da penalidade,
     // gerando Fin/Dri em vez de Fin/Vel ou Vel/Fin para pontas goleadoras (v5.1).
@@ -1306,7 +1312,7 @@ public final class HeuristicsEngine {
 
     double winScore = scores.getOrDefault(first, 0.0) + scores.getOrDefault(second, 0.0);
 
-    if (winScore < LOW_CONF_THRESHOLD) {
+    if (winScore <= LOW_CONF_THRESHOLD) {
       Set<String> allowedForConf = getAllowedCombinations(profile);
       List<String> candidates = new ArrayList<>();
       List<Double> weights   = new ArrayList<>();
