@@ -257,6 +257,75 @@ public final class BanCompiler {
       }
     }
 
+    // ── Rebalanceamento de lado (pós-atribuição completa) ─────────────────────
+    // Detecta elencos com proporção anormalmente alta de jogadores do lado
+    // direito — sintoma de ligas com dados incompletos no Transfermarkt, onde
+    // todos os jogadores sem dado de pé explícito chegam como "direito" por
+    // default. Quando >85% dos jogadores de campo são destros, parte deles
+    // em posições neutras (Zagueiro=2, Meia/Volante=3, Atacante=4)
+    // é convertida para esquerdo até atingir ~75% de destros, que é a
+    // proporção realista no futebol profissional.
+    //
+    // Posições com implicação de lado (Lateral=1) e Goleiros (0) não são tocados.
+    // A conversão começa pelos menos utilizados (cauda da lista) para preservar
+    // os titulares com dado de pé mais confiável.
+    {
+      int fieldRight = 0, fieldLeft = 0;
+      for (Object pl : allBuiltPlayers) {
+        Object posObj = getAnyField(pl, "e", "posicao");
+        int posCode = (posObj instanceof Number) ? ((Number) posObj).intValue() : -1;
+        if (posCode == 0) continue; // Goleiro — não conta
+
+        Object sideVal = getAnyField(pl, "i", "lado");
+        if (sideVal instanceof Number) {
+          if (((Number) sideVal).intValue() == 1) fieldLeft++;
+          else fieldRight++;
+        }
+      }
+
+      int totalField = fieldRight + fieldLeft;
+      // Só intervém quando: ≥10 jogadores de campo E >85% destros
+      if (totalField >= 10) {
+        double rightRatio = (double) fieldRight / totalField;
+        if (rightRatio > 0.85) {
+          int targetRight = (int) Math.round(totalField * 0.75);
+          int toFlip = fieldRight - targetRight;
+
+          if (toFlip > 0) {
+            if (DEBUG) System.out.println("[DEBUG] rebalance-lado: " + fieldRight + "/"
+                + totalField + " destros (" + String.format("%.0f", rightRatio * 100)
+                + "%) → convertendo " + toFlip + " para esquerdo");
+
+            int flipped = 0;
+            for (int idx = allBuiltPlayers.size() - 1; idx >= 0 && flipped < toFlip; idx--) {
+              Object pl = allBuiltPlayers.get(idx);
+
+              Object posObj = getAnyField(pl, "e", "posicao");
+              int posCode = (posObj instanceof Number) ? ((Number) posObj).intValue() : -1;
+              // Só posições neutras: Zagueiro(2), Meia/Volante(3), Atacante(4)
+              if (posCode != 2 && posCode != 3 && posCode != 4) continue;
+
+              Object sideVal = getAnyField(pl, "i", "lado");
+              if (!(sideVal instanceof Number) || ((Number) sideVal).intValue() != 0) continue;
+
+              setAnyField(pl, 1, "i", "lado");
+              flipped++;
+
+              if (DEBUG) {
+                Object nomeP = getAnyField(pl, "a");
+                System.out.println("[DEBUG] rebalance-lado: converteu " + nomeP
+                    + " pos=" + posCode + " Direito→Esquerdo");
+              }
+            }
+
+            if (DEBUG) System.out.println("[DEBUG] rebalance-lado: concluído, "
+                + flipped + " conversões realizadas");
+          }
+        }
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // Ordena sêniors por minutos DESC — base tanto para titulares quanto para corte competitivo.
     minutesByIndex.sort((a, b) -> Integer.compare(b[1], a[1]));
 
