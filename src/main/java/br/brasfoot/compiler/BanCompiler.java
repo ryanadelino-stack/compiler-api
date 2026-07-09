@@ -237,12 +237,24 @@ public final class BanCompiler {
         Object pl = allBuiltPlayers.get(d[0]);
         int side;
         if (d[1] == 1) {
-          // Ambidestro sem hint posicional: sempre vai para o lado ESQUERDO.
-          // No Brasfoot, o jogador canhoto se comporta melhor atuando pelo lado
-          // direito do que um destro pelo lado esquerdo — ambidestros como esquerdo
-          // maximizam a cobertura tática do elenco sem penalidade de desempenho.
-          side = 1; // sempre esquerdo
-          leftCount++;
+          // Ambidestro sem hint posicional: vai para o lado com MENOS jogadores
+          // no elenco (contagem atualizada a cada atribuição, para que múltiplos
+          // ambidestros no mesmo elenco se distribuam alternadamente).
+          //
+          // Empate → esquerdo, pois elencos reais são naturalmente dominados por
+          // destros e o canhoto é o recurso escasso; um ambidestro "gasto" no
+          // lado esquerdo maximiza a cobertura tática.
+          //
+          // Nota: ambidestros cuja posição implica lado (Lateral Esq., Ponta
+          // Dir., etc.) nunca chegam aqui — getSideDeferralType retorna 0 para
+          // eles e o lado vem da posição via SideResolver.
+          if (leftCount <= rightCount) {
+            side = 1; // Esquerdo
+            leftCount++;
+          } else {
+            side = 0; // Direito
+            rightCount++;
+          }
         } else {
           // Sem pé e sem hint posicional: sorteio ponderado dinâmico.
           // Alvo: ~25% canhotos (mais que os 20% anteriores para cobrir posições
@@ -776,6 +788,11 @@ public final class BanCompiler {
     StatsReader.Stats st = StatsReader.read(pj);
 
     Integer idadeParam = JsonUtil.getInt(pj, "age");
+
+    // Seed determinística por jogador: garante sorteios (fallback/low-confidence)
+    // reprodutíveis entre recompilações e independentes entre jogadores, mesmo
+    // que dois jogadores tenham atributos idênticos.
+    HeuristicsEngine.setSeedKey(nome);
 
     int[] top2 = HeuristicsEngine.pickTop2CharacteristicsByManual(
         pos,
