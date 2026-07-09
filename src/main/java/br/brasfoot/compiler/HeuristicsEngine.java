@@ -1,14 +1,23 @@
 // HeuristicsEngine.java
 // Pacote: br.brasfoot.compiler
 //
-// Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v5.0
-// Fevereiro 2026 – Versão 5.0 — Pares e Fallback Aprimorados
+// Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v6.0
+// Julho 2026 – Versão 6.0 — Fallback Ponderado por Atributos
+//
+// Mudanças v6.0:
+//   - Fallback (amostra insuficiente) agora é PONDERADO por atributos estáticos
+//     (idade, altura, secundárias) em vez de sorteio uniforme
+//   - Sorteios determinísticos: seed estável por jogador (nome + atributos) —
+//     recompilar o mesmo dataset gera sempre o mesmo .ban
+//   - MIN_FALLBACK_SAMPLE=3: jogadores com 1-2 jogos de carreira (taxas de ruído
+//     puro) são roteados para o fallback ponderado em vez do scoring
+//   - GENERIC_DEF: subperfil (LAT/ZAG) escolhido ponderado por altura/secundárias
+//   - Low-confidence draw também determinístico (seed estável)
 //
 // Mudanças v5.0:
 //   - Pool de pares por subposição atualizado (tabela mestre do design doc)
 //   - Novo perfil M_ESQUERDA_DIREITA (Meia Esquerda / Meia Direita)
 //   - Detecção de "Ala" → LAT_OF por padrão
-//   - Fallback (sem stats) agora sorteia aleatoriamente do pool da subposição detectada
 //   - Quando scoring produz par fora do allowed list, busca o melhor par permitido (top-5)
 //   - Posição genérica sem subposição → pool unificado do grupo
 //
@@ -20,8 +29,6 @@
 package br.brasfoot.compiler;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -34,7 +41,7 @@ import java.util.stream.Collectors;
 
 public final class HeuristicsEngine {
 
-  public static final String HEURISTICS_ENGINE_MARKER = "V5.0-PARES-APRIMORADOS";
+  public static final String HEURISTICS_ENGINE_MARKER = "V6.0-FALLBACK-PONDERADO";
 
   private static final boolean DEBUG =
       Boolean.parseBoolean(System.getProperty("brasfoot.debug", "false"));
@@ -1182,11 +1189,14 @@ public final class HeuristicsEngine {
     // Detecta perfil antecipadamente (usado tanto no fallback quanto no scored path)
     String profile = detectProfile(m);
 
-    if (m.played == 0) {
-      // Sem estatísticas: sorteia aleatoriamente do pool da subposição/grupo detectado
-      int[] fallback = getFallbackRandom(profile, pos);
+    if (m.played < MIN_FALLBACK_SAMPLE) {
+      // Amostra insuficiente (0-2 jogos de carreira): taxas por jogo seriam ruído
+      // puro (1 gol em 2 jogos → gpg=0.50). Sorteio ponderado por atributos
+      // estáticos (idade, altura, secundárias), determinístico por jogador.
+      int[] fallback = getFallbackWeighted(profile, pos, m);
       if (DEBUG) {
-        System.out.println("[DEBUG] No matches played — random fallback: "
+        System.out.println("[DEBUG] Insufficient sample (played=" + m.played
+            + " < " + MIN_FALLBACK_SAMPLE + ") — weighted fallback: "
             + idxToName(fallback[0]) + "/" + idxToName(fallback[1])
             + " for profile=" + profile);
       }
@@ -1282,7 +1292,7 @@ public final class HeuristicsEngine {
     }
 
     if (sorted.size() < 2) {
-      return getFallbackRandom(profile, pos);
+      return getFallbackWeighted(profile, pos, m);
     }
 
     int first  = sorted.get(0).getKey();
@@ -1327,7 +1337,7 @@ public final class HeuristicsEngine {
 
       if (!candidates.isEmpty()) {
         double totalWeight = weights.stream().mapToDouble(Double::doubleValue).sum();
-        double roll = new Random().nextDouble() * totalWeight;
+        double roll = new Random(stableSeed(m)).nextDouble() * totalWeight;
         double acc  = 0;
         String chosen = candidates.get(0);
         for (int k = 0; k < candidates.size(); k++) {
@@ -1398,9 +1408,9 @@ public final class HeuristicsEngine {
         if (DEBUG) System.out.println("[DEBUG] Adjusted to best allowed pair: "
             + idxToName(first) + "/" + idxToName(second));
       } else {
-        // Nenhum par nos top-5 está no allowed list — usa fallback aleatório do perfil
-        if (DEBUG) System.out.println("[DEBUG] No allowed pair in top-5; using random fallback for " + profile);
-        return getFallbackRandom(profile, pos);
+        // Nenhum par nos top-5 está no allowed list — usa fallback ponderado do perfil
+        if (DEBUG) System.out.println("[DEBUG] No allowed pair in top-5; using weighted fallback for " + profile);
+        return getFallbackWeighted(profile, pos, m);
       }
     }
 
@@ -1458,80 +1468,261 @@ public final class HeuristicsEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Fallback aleatório baseado no pool de pares da subposição
+  // Fallback ponderado por atributos (v6.0)
   // -------------------------------------------------------------------------
 
   /**
-   * Sorteia aleatoriamente um par do pool de pares para o perfil dado.
-   * Retorna int[3]: {cr1, cr2, resolvedPos}.
+   * Amostra mínima de jogos de carreira para o caminho de scoring por estatísticas.
+   * Abaixo disso, as taxas por jogo são ruído (1 gol em 2 jogos → gpg=0.50, que
+   * pareceria um artilheiro de elite) e o jogador é roteado para o fallback
+   * ponderado por atributos.
+   */
+  private static final int MIN_FALLBACK_SAMPLE = 3;
+
+  /**
+   * Chave de seed por jogador (normalmente o NOME), setada pelo BanCompiler
+   * antes de chamar pickTop2CharacteristicsByManual. Garante que dois jogadores
+   * com atributos idênticos (mesma idade/altura/posição) recebam sorteios
+   * INDEPENDENTES, eliminando qualquer risco de "fallback único" repetido.
    *
-   * resolvedPos é a posição numérica do Brasfoot que deve ser gravada no .ban,
-   * garantindo que característica e posição fiquem sempre consistentes.
+   * ThreadLocal para segurança caso a compilação venha a ser paralelizada.
+   * Se nunca for setada, a seed usa apenas os atributos (comportamento seguro).
+   */
+  private static final ThreadLocal<String> SEED_KEY = new ThreadLocal<>();
+
+  /** Chamado pelo BanCompiler com o nome do jogador antes de calcular características. */
+  public static void setSeedKey(String key) {
+    SEED_KEY.set(key);
+  }
+
+  /**
+   * Seed determinística derivada do seedKey (nome do jogador) + atributos estáveis.
+   * Garante que recompilações sucessivas do mesmo dataset produzam o mesmo .ban,
+   * mas jogadores diferentes tenham sorteios independentes.
+   */
+  private static long stableSeed(Metrics m) {
+    long h = 1125899906842597L;
+    String sk = SEED_KEY.get();
+    String key = (sk == null ? "" : sk) + "|" + m.posText + "|" + m.age + "|"
+        + m.height + "|" + m.related + "|" + String.join(",", m.secondary);
+    for (int i = 0; i < key.length(); i++) {
+      h = 31 * h + key.charAt(i);
+    }
+    return h;
+  }
+
+  /**
+   * Afinidade de UMA característica (por nome, ex. "Vel") com os atributos
+   * estáticos do jogador. Retorna um delta somado ao peso-base do par.
    *
-   * GENERIC_DEF — tratamento especial:
-   *   Sorteia um subperfil ({LAT_DEF, LAT_OF, ZAG_NORMAL, ZAG_OFENSIVO}) ANTES
-   *   de escolher o par, para que o resolvedPos reflita exatamente o grupo sorteado.
-   *   Ex.: se LAT_OF for sorteado → par Cru/Vel → resolvedPos=1 (Lateral).
-   *        se ZAG_NORMAL for sorteado → par Des/Mar → resolvedPos=2 (Zagueiro).
+   * Sinais usados (todos disponíveis mesmo para jogadores sem stats):
+   *   - Altura (m.height, em metros; 0 quando ausente)
+   *   - Idade  (m.age, Integer; null quando ausente)
+   *   - Posições secundárias (m.secondary)
+   *
+   * Calibração validada contra o elenco real do Brasileirão 2026:
+   *   Zagueiros média 1,87m | Pontas média 1,74-1,75m | Goleiros média 1,92m.
+   */
+  private static double charAffinity(String c, Metrics m, boolean isGk) {
+    double w = 0.0;
+    double h = m.height;          // metros; 0.0 = desconhecida
+    Integer age = m.age;
+    String sec = String.join(" ", m.secondary).toLowerCase(Locale.ROOT);
+
+    if (isGk) {
+      switch (c) {
+        case "SGo":
+          if (h >= 1.92) w += 10;        // goleiro gigante domina a área
+          else if (h >= 1.88) w += 5;
+          break;
+        case "Ref":
+          if (h > 0 && h < 1.88) w += 5; // goleiro baixo compensa com reflexo
+          if (age != null && age <= 24) w += 3;
+          break;
+        case "Col":
+          if (age != null && age >= 29) w += 6;  // colocação vem com experiência
+          else if (age != null && age >= 26) w += 3;
+          break;
+        case "DPe":
+          if (h >= 1.90) w += 2;         // envergadura ajuda em pênaltis
+          break;
+        default: break;
+      }
+      return w;
+    }
+
+    // ── Jogadores de linha ──────────────────────────────────────────────────
+    switch (c) {
+      case "Vel":
+        if (age != null) {
+          if (age <= 22) w += 8;
+          else if (age <= 26) w += 4;
+          if (age >= 34) w -= 10;        // veterano raramente é "velocista"
+          else if (age >= 31) w -= 7;
+        }
+        if (h > 0 && h <= 1.74) w += 3;  // baixinhos tendem a ser rápidos
+        if (h >= 1.90) w -= 3;
+        break;
+
+      case "Res":
+        if (age != null && age >= 25 && age <= 32) w += 5; // auge físico
+        break;
+
+      case "Cab":
+        if (h >= 1.90) w += 10;
+        else if (h >= 1.85) w += 6;
+        else if (h >= 1.80) w += 2;
+        else if (h > 0 && h <= 1.75) w -= 8; // 1,70m cabeceador não faz sentido
+        break;
+
+      case "Dri":
+        if (h > 0 && h <= 1.72) w += 7;  // perfil clássico do driblador baixo
+        else if (h > 0 && h <= 1.76) w += 4;
+        if (age != null && age <= 24) w += 2;
+        // Ponta que atua nos dois lados (invertido) → perfil de drible
+        if (sec.contains("ponta")) w += 2;
+        break;
+
+      case "Arm":
+        if (age != null && age >= 30) w += 6; // armador veterano cerebral
+        else if (age != null && age >= 27) w += 3;
+        break;
+
+      case "Pas":
+        if (age != null && age >= 30) w += 4;
+        else if (age != null && age >= 27) w += 2;
+        break;
+
+      case "Mar":
+        if (h >= 1.85) w += 3;
+        break;
+
+      case "Fin":
+        if (sec.contains("centroav")) w += 3;
+        break;
+
+      case "Cru":
+        if (sec.contains("lateral") || sec.contains("ala")
+            || sec.contains("meia esquerda") || sec.contains("meia direita")) w += 2;
+        break;
+
+      default: break;
+    }
+    return w;
+  }
+
+  /**
+   * Sorteio ponderado de um par dentro de um pool.
+   * Peso do par = max(1, 10 + afinidade(c1) + afinidade(c2)).
+   * O rng deve vir seedado com stableSeed(m) para reprodutibilidade.
+   */
+  private static String weightedDrawFromPool(Set<String> pool, Metrics m,
+                                             boolean isGk, Random rng) {
+    List<String> pairs = new ArrayList<>(pool);
+    double[] weights = new double[pairs.size()];
+    double total = 0;
+    for (int i = 0; i < pairs.size(); i++) {
+      String[] parts = pairs.get(i).split("/");
+      double w = 10.0;
+      if (parts.length == 2) {
+        w += charAffinity(parts[0], m, isGk) + charAffinity(parts[1], m, isGk);
+      }
+      weights[i] = Math.max(1.0, w);
+      total += weights[i];
+    }
+    double roll = rng.nextDouble() * total;
+    double acc = 0;
+    for (int i = 0; i < pairs.size(); i++) {
+      acc += weights[i];
+      if (roll <= acc) return pairs.get(i);
+    }
+    return pairs.get(pairs.size() - 1);
+  }
+
+  /**
+   * Fallback PONDERADO por atributos para jogadores com amostra insuficiente
+   * de estatísticas (< MIN_FALLBACK_SAMPLE jogos de carreira) e para os casos
+   * excepcionais do scored path (scores insuficientes, nenhum par permitido).
+   *
+   * Substitui o antigo getFallbackRandom (sorteio uniforme, não determinístico).
+   *
+   * Retorna int[3]: {cr1, cr2, resolvedPos} — mesmo contrato do método antigo.
+   *
+   * GENERIC_DEF: o subperfil (LAT_DEF/LAT_OF/ZAG_NORMAL/ZAG_OFENSIVO) é
+   * escolhido de forma ponderada por altura e secundárias, garantindo que um
+   * "Defensor" de 1,90m tenda a virar Zagueiro, e um de 1,74m tenda a Lateral.
    *
    * GENERIC_MID / GENERIC_ATK — o pos nunca varia dentro do grupo (sempre 3 ou 4),
-   *   então sorteia do pool unificado diretamente.
-   *
-   * Perfil específico → pool da subposição exata; resolvedPos = profileToPos(profile).
-   * Perfil desconhecido → pool genérico do grupo; resolvedPos = pos original.
+   *   então sorteia do pool unificado diretamente (ainda ponderado por atributos).
    */
-  private static int[] getFallbackRandom(String profile, int pos) {
+  private static int[] getFallbackWeighted(String profile, int pos, Metrics m) {
+    Random rng = new Random(stableSeed(m));
     Set<String> pool;
-    int resolvedPos = pos; // default: mantém pos original
-
-    Random rng = new Random();
+    int resolvedPos = pos;
+    boolean isGk = false;
 
     if ("GENERIC_DEF".equals(profile)) {
-      // Sorteia subperfil ANTES do par — garante alinhamento entre pos e características
-      List<String> defProfiles = new ArrayList<>(
-          List.of("LAT_DEF", "LAT_OF", "ZAG_NORMAL", "ZAG_OFENSIVO"));
-      Collections.shuffle(defProfiles, rng);
-      String chosenProfile = defProfiles.get(0);
-      pool = getAllowedCombinations(chosenProfile);
-      resolvedPos = profileToPos(chosenProfile);
-      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_DEF → subperfil="
-          + chosenProfile + " resolvedPos=" + resolvedPos + " pool=" + pool.size() + " pares");
+      // Escolha ponderada do subperfil defensivo por altura e secundárias
+      String[] subs = {"LAT_DEF", "LAT_OF", "ZAG_NORMAL", "ZAG_OFENSIVO"};
+      double[] w = {10, 10, 10, 5};
+      double h = m.height;
+      String sec = String.join(" ", m.secondary).toLowerCase(Locale.ROOT);
+      if (h >= 1.86) { w[2] += 20; w[3] += 8; w[0] -= 6; w[1] -= 6; }
+      else if (h > 0 && h <= 1.79) { w[0] += 12; w[1] += 12; w[2] -= 6; w[3] -= 4; }
+      if (sec.contains("zague")) { w[2] += 10; w[3] += 4; }
+      if (sec.contains("meia") || sec.contains("ponta")) { w[1] += 10; }
+      double total = 0;
+      for (int i = 0; i < w.length; i++) { w[i] = Math.max(1, w[i]); total += w[i]; }
+      double roll = rng.nextDouble() * total, acc = 0;
+      String chosen = subs[0];
+      for (int i = 0; i < subs.length; i++) {
+        acc += w[i];
+        if (roll <= acc) { chosen = subs[i]; break; }
+      }
+      pool = getAllowedCombinations(chosen);
+      resolvedPos = profileToPos(chosen);
+      if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted: GENERIC_DEF → subperfil="
+          + chosen + " (h=" + h + ") resolvedPos=" + resolvedPos + " pool=" + pool.size() + " pares");
 
     } else if ("GENERIC_MID".equals(profile)) {
       pool = getGenericGroupPool(3);
       resolvedPos = 3;
-      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_MID → pool=" + pool.size() + " pares");
+      if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted: GENERIC_MID → pool=" + pool.size() + " pares");
 
     } else if ("GENERIC_ATK".equals(profile)) {
       pool = getGenericGroupPool(4);
       resolvedPos = 4;
-      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: GENERIC_ATK → pool=" + pool.size() + " pares");
+      if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted: GENERIC_ATK → pool=" + pool.size() + " pares");
 
     } else {
       // Perfil específico conhecido
+      isGk = "GK".equals(profile);
       pool = getAllowedCombinations(profile);
       resolvedPos = profileToPos(profile);
       // Perfil desconhecido ou vazio → usa pool genérico do grupo por pos
       if (pool.isEmpty()) {
         pool = getGenericGroupPool(pos);
         resolvedPos = pos;
-        if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: profile='" + profile
+        if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted: profile='" + profile
             + "' vazio → usando getGenericGroupPool(pos=" + pos + ")");
       }
     }
 
     // Último recurso absoluto (não deveria acontecer)
     if (pool.isEmpty()) {
-      if (DEBUG) System.out.println("[DEBUG] getFallbackRandom: pool vazio, retornando Pas/Vel pos=" + pos);
+      if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted: pool vazio, retornando Pas/Vel pos=" + pos);
       return new int[]{11, 13, pos};
     }
 
-    List<String> list = new ArrayList<>(pool);
-    Collections.shuffle(list, rng);
-    int[] pair = parseCharPair(list.get(0));
+    // GK também pode chegar aqui via pool genérico — garante flag correta
+    if (resolvedPos == 0) isGk = true;
 
-    if (DEBUG) System.out.println("[DEBUG] getFallbackRandom [" + profile + "]: sorteou "
-        + list.get(0) + " resolvedPos=" + resolvedPos);
+    String chosenPair = weightedDrawFromPool(pool, m, isGk, rng);
+    int[] pair = parseCharPair(chosenPair);
+
+    if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted [" + profile + "]: sorteou "
+        + chosenPair + " (age=" + m.age + " h=" + m.height + " sec=" + m.secondary
+        + ") resolvedPos=" + resolvedPos);
     return new int[]{pair[0], pair[1], resolvedPos};
   }
 
