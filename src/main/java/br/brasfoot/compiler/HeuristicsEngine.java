@@ -1,8 +1,109 @@
 // HeuristicsEngine.java
 // Pacote: br.brasfoot.compiler
 //
-// Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v6.0
-// Julho 2026 – Versão 6.0 — Fallback Ponderado por Atributos
+// Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v7.0
+// Setembro 2026 – Versão 11.0 — Volante
+//
+// Mudanças v11.0 — varredura sistemática atrás da mesma classe de defeito nas
+// funções ainda não auditadas. O volante era subperfil separado e passara
+// despercebido; carregava TODOS os defeitos já corrigidos em outras posições:
+//   - disciplineIndex >= 0.70 (Des, +20) disparava em 99,8% dos volantes
+//   - disciplineIndex >= 0.75 (Mar, +20) disparava em 99,6%
+//   - disciplineIndex >= 0.80 (Pas, +15) disparava em 97,1%
+//   - minsPerGame >= 80 (Mar, +10) disparava em 1,3% — inalcançável
+//   - assistsPerGame >= 0.08 (Pas, faixa de 55 pts) atingido por 2,9%
+//   - goalsPerGame >= 0.12 (Fin, faixa de 55 pts) atingido por 2,9%
+//   - scorePasVol somava assistências DUAS VEZES (faixas + "bônus direto")
+//   Des e Mar também mediam a mesma coisa (ambos premiavam cartão e
+//   disciplina): empate técnico em 59% dos volantes, caído para 16%
+//   - scoreCruLat: as faixas 0.07 e 0.05 davam os mesmos 30 pontos — degrau
+//     plano que não distinguia nada entre elas
+//   - Priors regerados a partir deste scoring
+//
+// Mudanças v10.0 — o goleiro era a única posição cujo scoring nunca fora
+// revisado. Quatro defeitos, todos medidos em 462 goleiros com estatísticas:
+//   - scoreDPe era um CONTADOR DE IDADE: idade dava até +50 e jogos até +45,
+//     95 pontos antes de qualquer evidência, enquanto a taxa real de defesa de
+//     pênaltis valia no máximo +40. 92% dos goleiros com 33+ recebiam DPe,
+//     contra 12% dos menores de 27 — e a taxa mediana de defesa de quem
+//     recebia era 0,12, ABAIXO da média da liga (~0,25). Agora a taxa de defesa
+//     é o critério primário (o dado existe em 69% dos goleiros) e idade/jogos
+//     viram apoio; taxa ruim com amostra boa passa a descontar
+//   - scoreSGo tinha um BLOQUEIO TOTAL por gols sofridos (gpg > 1.50 → zero).
+//     Gol sofrido é atributo do time, não do goleiro: dos 46 goleiros com
+//     1,95m ou mais, 9 ficavam sem SGo e todos os 9 por esse corte — inclusive
+//     um de 2,00m com 276 jogos barrado por 1,51, um centésimo acima. Virou
+//     desconto graduado
+//   - a escala de altura do SGo saturava em 1,93m, então um goleiro de 2,04m
+//     empatava com um de 1,93m e o desempate ia para critérios em que o
+//     gigante costuma perder (reserva jovem). As faixas agora são os percentis
+//     DA POSIÇÃO (p25=1,86 p50=1,89 p75=1,92 p90=1,95 p95=1,96), o que também
+//     corrige o oposto: 1,88m é BAIXO para um goleiro e não deve render SGo
+//   - scoreCol e scoreRef mediam a mesma coisa duas vezes (ambos movidos por
+//     gols sofridos e clean sheets, que têm correlação de −0,76 entre si).
+//     Col passa a ser posicionamento (clean sheets + experiência + maturidade)
+//     e Ref, agilidade (juventude + estatura menor + qualidade)
+//
+// Mudanças v9.0 — fecha as duas posições que a v8.0 deixou em aberto:
+//   ZAGUEIRO — Des e Mar mediam a MESMA coisa duas vezes (ambos premiavam
+//   cartões E disciplina, o que é contraditório, já que disciplineIndex =
+//   1 − cartões/jogo/2). Pior: o corte disciplineIndex >= 0.70 disparava para
+//   100% dos zagueiros e >= 0.75 para 99% — pontos de graça que empilhavam as
+//   duas notas no mesmo patamar e deixavam o desempate ao acaso (Des > Mar em
+//   48% dos casos, diferença <= 10 pontos em 33%). Agora Des mede duelo
+//   (cartões + porte) e Mar mede posicionamento (disciplina + regularidade +
+//   minutos), sem sobreposição. O empate técnico caiu de 33% para 13%
+//   - scoreCabZag: altura passa a ser o sinal primário do cabeceio (antes gols
+//     valiam até 60 pontos e altura só 25 — o contrário do que define um
+//     cabeceador de defesa)
+//   - scorePasZag: removido outro bônus grátis de disciplina (disparava em 96%)
+//   - scoreVelZag: idade escalonada e limiar de altura apertado de 1,85 (perto
+//     da mediana, 1,87) para 1,82
+//   LATERAL — novo perfil LAT_GEN (união dos pools LAT_DEF + LAT_OF) para
+//   laterais sem amostra estatística. A v7.0 mandava todos para LAT_OF, cujo
+//   pool tem só 5 pares e exclui Vel/Mar e Cru/Mar — juntos 20% do prior da
+//   posição. Sem estatísticas não há base para escolher entre ofensivo e
+//   defensivo, então usa-se a união e deixa-se os priors ponderarem
+//   - Priors regerados a partir deste scoring
+//
+// Mudanças v8.0 — corrige o caminho de SCORING (não mais só o fallback),
+// calibrado sobre 4.570 jogadores com estatísticas de 7 ligas:
+//   - scoreDesMeia: removidos o bônus de identidade ("+20 por não ser meia
+//     ofensivo") e o de ausência de evidência ("+10 por marcar poucos gols"),
+//     que davam 55 pontos de graça a qualquer meia central. Cartões passam a ser
+//     escalonados por percentil real em vez de um corte único em 0.10
+//   - scoreVelMeia / scoreDriMeia: removido/apertado o bônus de altura, que era
+//     quase gratuito (mediana real de um meia é 1,76m e o corte era 1,78m) —
+//     mesmo defeito já corrigido em scoreVelVol. Idade passa a ser escalonada
+//   - scoreArmMeia / scorePasMeia: limiares de assistência estavam TODOS acima
+//     da mediana real, então o armador típico pontuava zero. Rebaixados aos
+//     percentis medidos (p50=0.037, p75=0.063, p90=0.091)
+//   - Efeito: Des/Vel cai de 67% para 28% dos meias centrais e Arm/Pas sobe de
+//     18% para 37% — a distribuição deixa de ser dominada por um par único
+//   - scoreRes*: limiares de minutos por jogo eram inalcançáveis (exigiam 80-85
+//     quando o p95 real é 85 para zagueiro, 78 para volante e 69 para
+//     centroavante — para centroavante era código morto). Agora usam os
+//     percentis reais DA POSIÇÃO
+//   - Priors do fallback regerados a partir deste scoring novo, como exige a
+//     regra de que os priors descrevem o que o scoring faz
+//
+// Mudanças v7.1 (recalibração sobre 7 datasets: + BRA1, BRA2, BRA3):
+//   - Priors reagregados sobre 4.617 jogadores com estatísticas (antes 2.416),
+//     o que dobra a amostra e dilui o viés de uma liga só. A ordem dos pares
+//     dominantes se confirmou em todas as ligas; o que variava era magnitude
+//   - Medianas de altura recalculadas em 5.458 jogadores (antes 3.506);
+//     goleiros subiram para 1,89m e centroavantes para 1,83m
+//   - Nenhuma mudança de lógica: só recalibração das duas tabelas de dados
+//
+// Mudanças v7.0 (calibradas em 4.390 jogadores de ARG2, GR1, GRS2 e MEXA):
+//   - Peso-base do fallback deixa de ser fixo (10.0) e passa a ser o prior
+//     EMPÍRICO da posição — a frequência com que o scoring escolhe cada par.
+//     Corrige o desbalanceamento medido em que elencos sem estatísticas
+//     recebiam características fracas (Pas 15.8% vs 5.9%, Res 7.2% vs 0.3%)
+//     e quase nunca as fortes (Vel 8.6% vs 18.9%, Cab 1.9% vs 7.5%)
+//   - Altura ausente (38% dos jogadores gregos) deixa de zerar o sinal de
+//     altura: é imputada pela mediana da posição, com afinidade amortecida
+//   - Priors suavizados (80% empírico + 20% uniforme) para preservar variedade
 //
 // Mudanças v6.0:
 //   - Fallback (amostra insuficiente) agora é PONDERADO por atributos estáticos
@@ -41,7 +142,7 @@ import java.util.stream.Collectors;
 
 public final class HeuristicsEngine {
 
-  public static final String HEURISTICS_ENGINE_MARKER = "V6.0-FALLBACK-PONDERADO";
+  public static final String HEURISTICS_ENGINE_MARKER = "V11.0-VOLANTE";
 
   private static final boolean DEBUG =
       Boolean.parseBoolean(System.getProperty("brasfoot.debug", "false"));
@@ -402,24 +503,37 @@ public final class HeuristicsEngine {
   // Resultado: distribuição equilibrada — SGo ~35%, Ref ~30%, DPe ~23%, Col ~12%
   // ────────────────────────────────────────────────────────────────────────────
 
+  // ── v10.0: Col e Ref deixam de medir a mesma coisa ──────────────────────
+  //
+  // DIAGNÓSTICO: as duas funções eram movidas pelos mesmos dois indicadores
+  // (gols sofridos por jogo e taxa de clean sheets), que por sua vez têm
+  // correlação de −0,76 entre si — ou seja, o MESMO sinal medido duas vezes, uma
+  // invertida. Isso empilhava as duas notas (diferença <= 10 pontos em 23% dos
+  // goleiros) e repetia, aqui, o defeito que Des/Mar tinha no zagueiro.
+  //
+  // Separação conceitual a partir da v10.0:
+  //   Col (colocação) = posicionamento consistente → clean sheets + experiência
+  //   Ref (reflexo)   = agilidade de reação → juventude, estatura menor, e a
+  //                     qualidade medida por gols sofridos
+  // Col perde o eixo de gols sofridos (que é do Ref e depende muito do time) e
+  // ganha peso em clean sheets e idade. Limiares nos percentis reais de 462
+  // goleiros: clean sheets p25=0.26, p50=0.31, p75=0.37, p90=0.41 — o corte
+  // antigo de 0.42 era atingido por só 8% deles.
   private static double scoreCol(Metrics m) {
     double pontos = 0;
-    // CSR é o indicador primário: clean sheets refletem posicionamento consistente
-    if (m.cleanSheetRate >= 0.42) pontos += 55;
-    else if (m.cleanSheetRate >= 0.35) pontos += 40;
-    else if (m.cleanSheetRate >= 0.28) pontos += 22;
-    else if (m.cleanSheetRate >= 0.22) pontos += 10;
-    // GPG complementa: posicionamento reduz gols sofridos
-    if (m.goalsConcededPerGame <= 0.90) pontos += 40;
-    else if (m.goalsConcededPerGame <= 1.05) pontos += 28;
-    else if (m.goalsConcededPerGame <= 1.15) pontos += 18;
-    else if (m.goalsConcededPerGame <= 1.25) pontos += 8;
+    // Clean sheets é o indicador primário e agora praticamente exclusivo
+    if (m.cleanSheetRate >= 0.41) pontos += 62;      // p90
+    else if (m.cleanSheetRate >= 0.37) pontos += 48; // p75
+    else if (m.cleanSheetRate >= 0.31) pontos += 32; // p50
+    else if (m.cleanSheetRate >= 0.26) pontos += 16; // p25
     // Experiência: posicionamento se aprende com jogos
-    if (m.played >= 200) pontos += 20;
-    else if (m.played >= 100) pontos += 12;
-    // Sinergia: goleiro genuinamente bom defensivamente tem Col e Ref elevados
-    if (m.cleanSheetRate >= 0.30 && m.goalsConcededPerGame <= 1.10) pontos += 20;
-    else if (m.cleanSheetRate >= 0.25 && m.goalsConcededPerGame <= 1.20) pontos += 10;
+    if (m.played >= 300) pontos += 30;
+    else if (m.played >= 200) pontos += 22;
+    else if (m.played >= 100) pontos += 13;
+    // v10.0: colocação é atributo de goleiro maduro — o inverso do eixo do Ref
+    if (m.age != null && m.age >= 32) pontos += 25;
+    else if (m.age != null && m.age >= 29) pontos += 15;
+    else if (m.age != null && m.age >= 26) pontos += 7;
     return pontos;
   }
 
@@ -446,23 +560,36 @@ public final class HeuristicsEngine {
       else if (m.age != null && m.age > 0 && m.age <= 34) pontos += 8;
       else if (m.age != null && m.age > 0 && m.age <= 37) pontos += 4;
     }
-    if (m.cleanSheetRate >= 0.35) pontos += 12;
-    else if (m.cleanSheetRate >= 0.28) pontos += 7;
+    // v10.0: estatura menor favorece o reflexo lateral (o inverso do eixo do
+    // SGo). Percentis reais: p25=1,86 p50=1,89 p75=1,92.
+    if (m.height > 0 && m.height <= 1.86) pontos += 18;
+    else if (m.height > 0 && m.height <= 1.89) pontos += 10;
     if (m.played >= 60) pontos += 10;
     return pontos;
   }
 
+  // ── v10.0: DPe deixa de ser um contador de idade ─────────────────────────
+  //
+  // DIAGNÓSTICO: "Defesa de Pênalti" era decidida por idade e jogos, não por
+  // pênaltis defendidos. Idade dava até +50 e jogos até +45 — 95 pontos antes de
+  // qualquer evidência — enquanto a taxa real de defesa valia no máximo +40.
+  // Resultado: 92% dos goleiros com 33 anos ou mais recebiam DPe, contra 12% dos
+  // menores de 27, e a nota mediana ia de 122 para 9 só pela faixa etária.
+  //
+  // E o dado existe: 69% dos goleiros têm 5 ou mais pênaltis enfrentados
+  // registrados no JSON. Estava sendo abafado por um proxy.
+  //
+  // Agora a taxa de defesa é o critério primário; idade e jogos viram apoio.
   private static double scoreDPe(Metrics m) {
     double pontos = 0;
-    // IDADE é o indicador primário — DPe é mérito de veterano
-    if (m.age != null && m.age >= 33)      pontos += 50;
-    else if (m.age != null && m.age >= 30) pontos += 32;
-    else if (m.age != null && m.age >= 27) pontos += 15;
-    // Jogos acumulados: principal indicador de experiência total
-    if (m.played >= 300)      pontos += 45;
-    else if (m.played >= 200) pontos += 32;
-    else if (m.played >= 120) pontos += 18;
-    else if (m.played >= 60)  pontos += 8;
+    // Idade e jogos: contexto, não veredito
+    if (m.age != null && m.age >= 33)      pontos += 22;
+    else if (m.age != null && m.age >= 30) pontos += 14;
+    else if (m.age != null && m.age >= 27) pontos += 7;
+    if (m.played >= 300)      pontos += 20;
+    else if (m.played >= 200) pontos += 14;
+    else if (m.played >= 120) pontos += 8;
+    else if (m.played >= 60)  pontos += 4;
     // Pequeno bônus de qualidade e disciplina
     if (m.goalsConcededPerGame <= 1.15) pontos += 10;
     if (m.cleanSheetRate >= 0.25) pontos += 8;
@@ -476,11 +603,12 @@ public final class HeuristicsEngine {
     //   >= 25%: acima da média
     //   >= 15%: abaixo da média mas com experiência
     if (m.penFaced >= 5) {
-      if      (m.penaltySaveRate >= 0.40) pontos += 40;
-      else if (m.penaltySaveRate >= 0.33) pontos += 28;
-      else if (m.penaltySaveRate >= 0.25) pontos += 18;
-      else if (m.penaltySaveRate >= 0.15) pontos += 8;
-      // < 0.15: abaixo da média — sem bônus mas sem penalidade
+      // v10.0: esta é a evidência direta e passa a pesar mais que idade + jogos
+      if      (m.penaltySaveRate >= 0.40) pontos += 85;
+      else if (m.penaltySaveRate >= 0.33) pontos += 65;
+      else if (m.penaltySaveRate >= 0.25) pontos += 42;
+      else if (m.penaltySaveRate >= 0.15) pontos += 18;
+      else pontos -= 15;  // v10.0: taxa ruim com amostra boa é evidência CONTRA
       // Bônus de volume: já enfrentou muitos pênaltis = mais experiência
       if (m.penFaced >= 25) pontos += 12;
       else if (m.penFaced >= 15) pontos += 6;
@@ -493,23 +621,50 @@ public final class HeuristicsEngine {
     return pontos;
   }
 
+  // ── v10.0: escala de altura do SGo estendida ────────────────────────────
+  //
+  // DIAGNÓSTICO: a escala saturava em 1,93m (+55), mas a distribuição real de
+  // 442 goleiros vai muito além disso — p75=1,92, p90=1,95, p95=1,96, máximo
+  // 2,04m. Resultado medido: a faixa >=1,95 recebia SGo em 80% dos casos,
+  // MENOS que a faixa 1,93-1,94 (92%), porque acima de 1,93 a altura parava de
+  // pontuar e o desempate passava para gols sofridos e jogos — critérios em que
+  // o goleiro gigante costuma ser um reserva jovem. Um goleiro de 2,04m ficava
+  // empatado em altura com um de 1,93m.
+  //
+  // Além disso o corte em 1,87 era um degrau seco: 1,86m zerava SGo. Agora há
+  // uma faixa de transição em 1,85.
   private static double scoreSGo(Metrics m) {
-    // Altura mínima elevada: 1.87m — somente goleiros realmente altos comandam a área
-    if (m.height < 1.87) return 0;
-    // QUALIDADE MÍNIMA obrigatória: goleiro ruim não comanda a área com segurança.
-    // GPG > 1.50 → bloqueio total (não faz sentido SGo para quem sofre muito)
-    if (m.goalsConcededPerGame > 1.50) return 0;
+    // Abaixo do p25 da posição (1,86m) não comanda a área
+    if (m.height < 1.86) return 0;
+    // v10.0: REMOVIDO o bloqueio total por gols sofridos (gpg > 1.50 → 0).
+    //
+    // Gols sofridos por jogo é sobretudo função da defesa do time, não da
+    // capacidade do goleiro de dominar a área. O portão zerava justamente os
+    // goleiros mais altos de equipes fracas: dos 46 goleiros com 1,95m ou mais,
+    // 9 ficavam sem SGo e TODOS os 9 por causa desse corte — incluindo um de
+    // 2,00m com 276 jogos barrado por 1,51 gols/jogo, um centésimo acima do
+    // limite. Altura é atributo individual; gol sofrido é atributo coletivo.
+    //
+    // Agora o excesso de gols sofridos apenas desconta, de forma graduada.
     double pontos = 0;
-    // ALTURA é o indicador primário
-    if (m.height >= 1.93) pontos += 55;
-    else if (m.height >= 1.90) pontos += 40;
-    else if (m.height >= 1.87) pontos += 20;
+    // ALTURA é o indicador primário. As faixas são os PERCENTIS DA PRÓPRIA
+    // POSIÇÃO (442 goleiros: p25=1,86 p50=1,89 p75=1,92 p90=1,95 p95=1,96,
+    // máximo 2,04) e não valores absolutos. Isso importa porque a mediana de um
+    // goleiro já é 1,89m — um goleiro de 1,88m é BAIXO para a posição e não deve
+    // receber SGo com facilidade, embora fosse altíssimo em qualquer outra.
+    if (m.height >= 1.98) pontos += 72;           // acima do p95, raro
+    else if (m.height >= 1.96) pontos += 62;      // p95
+    else if (m.height >= 1.95) pontos += 54;      // p90
+    else if (m.height >= 1.92) pontos += 40;      // p75
+    else if (m.height >= 1.89) pontos += 20;      // p50
+    else pontos += 6;                              // p25 (1,86-1,88): transição
     // Qualidade defensiva amplifica SGo: saída segura gera cleansheets
     if (m.goalsConcededPerGame <= 1.00)      pontos += 30;
     else if (m.goalsConcededPerGame <= 1.15) pontos += 18;
     else if (m.goalsConcededPerGame <= 1.25) pontos += 8;
     else if (m.goalsConcededPerGame <= 1.35) pontos += 2;
-    // gpg 1.35~1.50: bônus zero (apenas altura conta — perfil limítrofe)
+    else if (m.goalsConcededPerGame > 1.80) pontos -= 22; // v10.0: desconto graduado
+    else if (m.goalsConcededPerGame > 1.55) pontos -= 12;
     if (m.cleanSheetRate >= 0.35) pontos += 20;
     else if (m.cleanSheetRate >= 0.28) pontos += 12;
     else if (m.cleanSheetRate >= 0.22) pontos += 6;
@@ -525,11 +680,33 @@ public final class HeuristicsEngine {
   }
 
   // Zagueiro
+  // ── v9.0: Des e Mar de zagueiro passam a medir coisas DIFERENTES ─────────
+  //
+  // DIAGNÓSTICO: Des/Mar + Mar/Des respondiam por 93% dos zagueiros, e a ordem
+  // entre os dois era praticamente cara-ou-coroa (Des > Mar em 48% dos casos;
+  // diferença <= 10 pontos em 33%). A causa é que as duas funções mediam a MESMA
+  // coisa duas vezes: ambas premiavam cartões E disciplina ao mesmo tempo — o que
+  // é internamente contraditório, já que disciplineIndex = 1 − cartões/jogo/2,
+  // ou seja, disciplina alta significa POUCOS cartões.
+  //
+  // Pior: disciplineIndex >= 0.70 dispara para 100% dos zagueiros e >= 0.75 para
+  // 99% (a fórmula satura perto de 0,89 de mediana). Os dois bônus eram pontos
+  // de graça para todo mundo — +20 no Des e +25 no Mar —, o que empilhava as
+  // duas notas no mesmo patamar e deixava o desempate ao acaso.
+  //
+  // A partir da v9.0 os dois conceitos ficam separados:
+  //   Des (desarme)   = ganhar a bola no duelo → faltas/cartões e porte físico
+  //   Mar (marcação)  = posicionamento e constância → disciplina, regularidade
+  //                     e minutos em campo, SEM prêmio por cartão
+  // Limiares nos percentis reais de 773 zagueiros: amarelo/jogo p50=0.185,
+  // p75=0.231, p90=0.278; disciplina p50=0.889, p75=0.915; regularidade
+  // p75=0.82, p90=0.87.
   private static double scoreDesZag(Metrics m) {
     double pontos = 0;
-    if (m.yellowPerGame >= 0.15) pontos += 35;
-    else if (m.yellowPerGame >= 0.10) pontos += 25;
-    if (m.disciplineIndex >= 0.70) pontos += 20;
+    if (m.yellowPerGame >= 0.278) pontos += 58;      // p90 — desarmador agressivo
+    else if (m.yellowPerGame >= 0.231) pontos += 46; // p75
+    else if (m.yellowPerGame >= 0.185) pontos += 34; // p50
+    else if (m.yellowPerGame >= 0.145) pontos += 18; // p25
     // Ajustado: muito alto (>=1.88) recebe mais; moderadamente alto (>=1.85) recebe menos.
     if (m.height >= 1.88) pontos += 22;
     else if (m.height >= 1.85) pontos += 12;
@@ -542,21 +719,36 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreMarZag(Metrics m) {
+    // v9.0: sem bônus por cartão (isso é Des) e sem bônus por "marcar poucos gols"
+    // (ausência de evidência, mesmo defeito corrigido em scoreDesMeia na v8.0).
     double pontos = 0;
-    if (m.yellowPerGame >= 0.12) pontos += 30;
-    if (m.disciplineIndex >= 0.75) pontos += 25;
-    if (m.regularity >= 0.70) pontos += 20;
-    if (m.played >= 180) pontos += 15;
-    if (m.goalsPerGame <= 0.05) pontos += 10;
+    if (m.disciplineIndex >= 0.915) pontos += 45;      // p75 — marca sem faltar
+    else if (m.disciplineIndex >= 0.889) pontos += 33; // p50
+    else if (m.disciplineIndex >= 0.860) pontos += 20; // p25
+    if (m.regularity >= 0.87) pontos += 35;            // p90
+    else if (m.regularity >= 0.82) pontos += 26;       // p75
+    else if (m.regularity >= 0.74) pontos += 15;       // p50
+    if (m.minsPerGame >= 84) pontos += 18;             // p90 — joga os 90
+    else if (m.minsPerGame >= 79) pontos += 10;        // p50
+    if (m.played >= 180) pontos += 12;
+    else if (m.played >= 120) pontos += 6;
     return pontos;
   }
 
   private static double scoreCabZag(Metrics m) {
+    // v9.0 — INVERSÃO DE PRIORIDADE. Antes os gols valiam até 60 pontos e a
+    // altura só 25, o que é o contrário do que define um cabeceador de defesa:
+    // um zagueiro de 1,95m domina a área aérea independentemente de quantos gols
+    // marcou. Altura passa a ser o sinal primário (percentis reais de 773
+    // zagueiros: p50=1,87 p75=1,90 p90=1,92) e os gols reforçam em segundo plano
+    // (p50=0.037 p75=0.058 p90=0.079).
     double pontos = 0;
-    if (m.goalsPerGame >= 0.10) pontos += 60;
-    else if (m.goalsPerGame >= 0.07) pontos += 50;
-    else if (m.goalsPerGame >= 0.04) pontos += 30;
-    if (m.height >= 1.88) pontos += 25;
+    if (m.height >= 1.92) pontos += 45;
+    else if (m.height >= 1.90) pontos += 32;
+    else if (m.height >= 1.87) pontos += 18;
+    if (m.goalsPerGame >= 0.079) pontos += 35;
+    else if (m.goalsPerGame >= 0.058) pontos += 25;
+    else if (m.goalsPerGame >= 0.037) pontos += 12;
     if (m.penaltyGoals > 0) pontos += 15;
     if (m.participationPerGame >= 0.08) pontos += 10;
     if (m.played >= 300 && m.goalsPerGame >= 0.06) pontos += 20;
@@ -565,8 +757,16 @@ public final class HeuristicsEngine {
 
   private static double scoreVelZag(Metrics m) {
     double pontos = 0;
-    if (m.age != null && m.age > 0 && m.age <= 27) pontos += 30;
-    if (m.height > 0 && m.height <= 1.85) pontos += 20;
+    // v9.0: idade escalonada (era um degrau único em 27) e limiar de altura
+    // apertado de 1,85 para 1,82 — a mediana de um zagueiro é 1,87m, então 1,85
+    // premiava perto de metade deles por "ser baixo".
+    if (m.age != null && m.age > 0) {
+      if (m.age <= 23) pontos += 30;
+      else if (m.age <= 27) pontos += 20;
+      else if (m.age >= 33) pontos -= 12;
+      else if (m.age >= 30) pontos -= 6;
+    }
+    if (m.height > 0 && m.height <= 1.82) pontos += 20;
     if (m.assistsPerGame >= 0.03) pontos += 20;
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
       pontos += 20;
@@ -579,20 +779,47 @@ public final class HeuristicsEngine {
   }
 
   private static double scorePasZag(Metrics m) {
+    // v9.0: limiares descidos aos percentis reais (p50=0.010, p75=0.019,
+    // p90=0.030) — os cortes antigos (0.02/0.03) eram p75/p90, então o zagueiro
+    // com saída de bola mediana pontuava zero.
     double pontos = 0;
-    if (m.assistsPerGame >= 0.03) pontos += 35;
-    else if (m.assistsPerGame >= 0.02) pontos += 25;
+    if (m.assistsPerGame >= 0.030) pontos += 42;      // p90
+    else if (m.assistsPerGame >= 0.019) pontos += 28; // p75
+    else if (m.assistsPerGame >= 0.010) pontos += 14; // p50
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
       pontos += 25;
-    if (m.disciplineIndex >= 0.80) pontos += 15;
+    // v9.0: o corte de disciplina em 0.80 disparava para 96% dos zagueiros —
+    // era ponto de graça, não evidência de saída de bola. Subido ao p75 real.
+    if (m.disciplineIndex >= 0.915) pontos += 15;
     return pontos;
   }
 
+  // ── v8.0: Resistência recalibrada ────────────────────────────────────────
+  //
+  // DIAGNÓSTICO: Res aparecia em 0,2% dos jogadores — praticamente morta. A causa
+  // não era o peso, era o LIMIAR: todas as funções exigiam minsPerGame >= 85 ou
+  // >= 80, valores calibrados como se um titular jogasse ~90 min por partida.
+  // Mas minutesPlayed/matchesPlayed inclui entradas no 2º tempo, então a
+  // distribuição real (medida em 4.570 jogadores com estatísticas) é bem menor
+  // e varia MUITO por posição:
+  //
+  //   posição        p50   p75   p90   p95
+  //   Zagueiro        79    82    84    85
+  //   Volante         65    71    76    78
+  //   Meia central    62    68    73    75
+  //   Centroavante    56    62    66    69
+  //
+  // Ou seja: para centroavante o corte de 80 era INALCANÇÁVEL (p95 = 69), e para
+  // volante quase (p95 = 78). O bônus principal de Res era código morto nessas
+  // posições. Os limiares abaixo passam a ser os percentis reais DA POSIÇÃO.
   private static double scoreResZag(Metrics m) {
+    // Percentis de zagueiro: p75=82, p90=84, p95=85.
     double pontos = 0;
-    if (m.minsPerGame >= 85) pontos += 35;
-    else if (m.minsPerGame >= 80) pontos += 25;
-    if (m.regularity >= 0.75) pontos += 25;
+    if (m.minsPerGame >= 85) pontos += 45;
+    else if (m.minsPerGame >= 84) pontos += 36;
+    else if (m.minsPerGame >= 82) pontos += 24;
+    if (m.regularity >= 0.87) pontos += 30;       // p90
+    else if (m.regularity >= 0.82) pontos += 20;  // p75
     if (m.age != null && m.age >= 29 && m.age <= 34) pontos += 15;
     return pontos;
   }
@@ -600,10 +827,14 @@ public final class HeuristicsEngine {
   // Lateral
   private static double scoreCruLat(Metrics m) {
     double pontos = 20; // base
-    if (m.assistsPerGame >= 0.10) pontos += 40;
-    else if (m.assistsPerGame >= 0.07) pontos += 30;
-    else if (m.assistsPerGame >= 0.05) pontos += 30;
-    else if (m.assistsPerGame >= 0.03) pontos += 25;
+    // v11.0: as faixas 0.07 e 0.05 davam os MESMOS 30 pontos — um degrau plano
+    // que não distinguia nada entre elas. Reescalonado nos percentis reais de
+    // 725 laterais: assist/jogo p25=0.018 p50=0.040 p75=0.065 p90=0.088 p95=0.110.
+    if (m.assistsPerGame >= 0.110) pontos += 45;      // p95
+    else if (m.assistsPerGame >= 0.088) pontos += 38; // p90
+    else if (m.assistsPerGame >= 0.065) pontos += 30; // p75
+    else if (m.assistsPerGame >= 0.040) pontos += 22; // p50
+    else if (m.assistsPerGame >= 0.018) pontos += 12; // p25
     if (isLateralOfensivo(m)) pontos += 25;
     if (m.participationPerGame >= 0.12) pontos += 15;
     if (m.assistsPerGame >= 0.08) pontos += 20;
@@ -667,13 +898,33 @@ public final class HeuristicsEngine {
   }
 
   // Volante
+  // ── v11.0: volante recebe a mesma auditoria do zagueiro e do meia ────────
+  //
+  // O volante passou despercebido nas versões anteriores por ser um subperfil
+  // separado, e carregava exatamente os mesmos defeitos. Medido em 475 volantes:
+  //   disciplineIndex >= 0.70 (Des, +20) dispara em  99,8%  → ponto de graça
+  //   disciplineIndex >= 0.75 (Mar, +20) dispara em  99,6%  → ponto de graça
+  //   disciplineIndex >= 0.80 (Pas, +15) dispara em  97,1%  → ponto de graça
+  //   minsPerGame >= 80       (Mar, +10) dispara em   1,3%  → inalcançável
+  //   assistsPerGame >= 0.08  (Pas, +55) dispara em   2,9%  → faixa de topo morta
+  //   goalsPerGame >= 0.12    (Fin, +55) dispara em   2,9%  → faixa de topo morta
+  //
+  // Percentis reais: assist/jogo p50=0.020 p75=0.035 p90=0.059 p95=0.074 |
+  // gols/jogo p50=0.037 p75=0.061 p90=0.090 | amarelo/jogo p50=0.200 p75=0.250
+  // p90=0.294 | disciplina p25=0.859 p50=0.890 p75=0.917 | min/jogo p75=71
+  // p90=76 p95=78 | regularidade p75=0.86 p90=0.91.
   private static double scoreDesVol(Metrics m) {
+    // Des = ganhar a bola no duelo → cartões. Sem bônus de disciplina (que é do
+    // Mar) e sem prêmio por marcar poucos gols (ausência de evidência).
     double pontos = 0;
-    if (m.yellowPerGame >= 0.15) pontos += 35;
-    else if (m.yellowPerGame >= 0.10) pontos += 25;
-    if (m.disciplineIndex >= 0.70) pontos += 20;
-    if (m.goalsPerGame <= 0.05) pontos += 15;
-    if (m.played >= 150) pontos += 10;
+    // Desarme e marcação são as competências CENTRAIS do volante e pesam mais
+    // que passe — o que não é bônus de identidade: cada faixa continua exigindo
+    // evidência (cartões), só com escala à altura da posição.
+    if (m.yellowPerGame >= 0.294) pontos += 88;      // p90
+    else if (m.yellowPerGame >= 0.250) pontos += 72; // p75
+    else if (m.yellowPerGame >= 0.200) pontos += 56; // p50
+    else if (m.yellowPerGame >= 0.154) pontos += 32; // p25
+    if (m.played >= 150) pontos += 14;
     // Bônus distribuidor: volante destruidor que também assiste bem tem perfil
     // Des/Pas — o "destroyer-playmaker". Sem este bônus, Mar sempre vencia Des
     // por causa dos bônus de regularidade/disciplina em scoreMarVol (v5.1).
@@ -683,12 +934,19 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreMarVol(Metrics m) {
+    // Mar = posicionamento e constância → disciplina, regularidade e minutos.
+    // Sem bônus por cartão (que é do Des), espelhando a separação feita no
+    // zagueiro na v9.0.
     double pontos = 0;
-    if (m.yellowPerGame >= 0.12) pontos += 30;
-    if (m.regularity >= 0.70) pontos += 25;
-    if (m.disciplineIndex >= 0.75) pontos += 20;
-    if (m.played >= 180) pontos += 15;
-    if (m.minsPerGame >= 80) pontos += 10;
+    if (m.disciplineIndex >= 0.917) pontos += 54;      // p75
+    else if (m.disciplineIndex >= 0.890) pontos += 42; // p50
+    else if (m.disciplineIndex >= 0.859) pontos += 24; // p25
+    if (m.regularity >= 0.91) pontos += 44;            // p90
+    else if (m.regularity >= 0.86) pontos += 34;       // p75
+    else if (m.regularity >= 0.80) pontos += 20;       // p50
+    if (m.minsPerGame >= 78) pontos += 16;             // p95 (era 80: 1,3%)
+    else if (m.minsPerGame >= 71) pontos += 8;         // p75
+    if (m.played >= 180) pontos += 12;
     return pontos;
   }
 
@@ -699,21 +957,24 @@ public final class HeuristicsEngine {
     //      sem muitos gols, a criação de jogo justifica o par.
     //   2. Volante com alta participação geral (ppg elevado) — complemento do (1).
     double pontos = 0;
-    if (m.assistsPerGame >= 0.08) pontos += 55;
-    else if (m.assistsPerGame >= 0.05) pontos += 42;
-    else if (m.assistsPerGame >= 0.03) pontos += 30;
-    // Bônus direto por assistências consideráveis — independente de gols.
-    // Garante que Des/Pas e Mar/Pas apareçam para volantes criadores mesmo
-    // quando goalsPerGame é zero ou baixo.
-    if (m.assistsPerGame >= 0.06) pontos += 20;
-    else if (m.assistsPerGame >= 0.04) pontos += 12;
+    // v11.0: limiares nos percentis reais — o antigo topo (0.08) era atingido
+    // por só 2,9% dos volantes, deixando a faixa de 55 pontos praticamente morta.
+    if (m.assistsPerGame >= 0.074) pontos += 55;      // p95
+    else if (m.assistsPerGame >= 0.059) pontos += 45; // p90
+    else if (m.assistsPerGame >= 0.035) pontos += 32; // p75
+    else if (m.assistsPerGame >= 0.020) pontos += 18; // p50
+    // v11.0: REMOVIDO o "bônus direto por assistências", que somava de novo o
+    // mesmo sinal já contado nas faixas acima. Era assistência contando duas
+    // vezes — a mesma duplicação que Des/Mar tinha no zagueiro — e inflava Pas
+    // a ponto de Mar/Pas e Des/Pas engolirem o par Mar/Des do volante.
     // Participação reforça (mas não substitui assists como critério primário)
-    if (m.participationPerGame >= 0.15) pontos += 30;
-    else if (m.participationPerGame >= 0.10) pontos += 20;
-    else if (m.participationPerGame >= 0.07) pontos += 12;
+    if (m.participationPerGame >= 0.154) pontos += 30;      // p95
+    else if (m.participationPerGame >= 0.130) pontos += 20; // p90
+    else if (m.participationPerGame >= 0.091) pontos += 12; // p75
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia central")))
       pontos += 20;
-    if (m.disciplineIndex >= 0.80) pontos += 15;
+    // v11.0: o corte de disciplina em 0.80 disparava para 97,1% dos volantes.
+    if (m.disciplineIndex >= 0.917) pontos += 15;   // p75
     return pontos;
   }
 
@@ -722,11 +983,13 @@ public final class HeuristicsEngine {
     // realmente relevantes. Thresholds elevados para evitar que qualquer volante
     // com poucos gols receba Fin como característica secundária.
     double pontos = 0;
-    if (m.goalsPerGame >= 0.12) pontos += 55;      // goleador atípico para a posição
-    else if (m.goalsPerGame >= 0.08) pontos += 38;  // muito bom
-    else if (m.goalsPerGame >= 0.05) pontos += 20;  // razoável — ainda competitivo
-    // Abaixo de 0.05 não pontua: Mar/Fin e Des/Fin não devem aparecer para
-    // volantes com taxa de gol baixa ou mediana.
+    // v11.0: limiares nos percentis reais (p50=0.037 p75=0.061 p90=0.090
+    // p95=0.104). O antigo topo (0.12) era atingido por só 2,9% dos volantes.
+    if (m.goalsPerGame >= 0.104) pontos += 55;      // p95 — goleador atípico
+    else if (m.goalsPerGame >= 0.090) pontos += 44; // p90
+    else if (m.goalsPerGame >= 0.061) pontos += 28; // p75
+    // Abaixo do p75 não pontua: Mar/Fin e Des/Fin não devem aparecer para
+    // volantes com taxa de gol mediana.
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("meia ofensivo")))
       pontos += 20;
     // Pênaltis cobrados indicam vocação ofensiva, mas não sobrepõem a taxa de gol
@@ -738,10 +1001,14 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreResVol(Metrics m) {
+    // Percentis de volante: p75=71, p90=76, p95=78. O corte antigo de 80/85
+    // quase nunca era atingido — Res ficava em 5º lugar de 6 em 100% dos casos.
     double pontos = 0;
-    if (m.minsPerGame >= 85) pontos += 35;
-    else if (m.minsPerGame >= 80) pontos += 25;
-    if (m.regularity >= 0.75) pontos += 25;
+    if (m.minsPerGame >= 78) pontos += 45;
+    else if (m.minsPerGame >= 76) pontos += 36;
+    else if (m.minsPerGame >= 71) pontos += 24;
+    if (m.regularity >= 0.91) pontos += 30;       // p90
+    else if (m.regularity >= 0.86) pontos += 20;  // p75
     if (m.age != null && m.age >= 27 && m.age <= 32) pontos += 15;
     return pontos;
   }
@@ -764,10 +1031,16 @@ public final class HeuristicsEngine {
   // Meia
   private static double scoreArmMeia(Metrics m, boolean ofensivo) {
     double pontos = 0;
-    if (m.assistsPerGame >= 0.12) pontos += 40;
-    else if (m.assistsPerGame >= 0.08) pontos += 30;
-    else if (m.assistsPerGame >= 0.05) pontos += 20;
-    if (m.participationPerGame >= 0.20) pontos += 20;
+    // v8.0 — limiares recalibrados sobre percentis reais de 390 meias centrais
+    // (assists/jogo p50=0.037, p75=0.063, p90=0.091, p95=0.112). Os cortes
+    // anteriores (0.05 / 0.08 / 0.12) ficavam todos ACIMA da mediana, então o
+    // armador típico pontuava zero e Arm nunca competia com Des.
+    if (m.assistsPerGame >= 0.112) pontos += 45;      // p95
+    else if (m.assistsPerGame >= 0.091) pontos += 38; // p90
+    else if (m.assistsPerGame >= 0.063) pontos += 28; // p75
+    else if (m.assistsPerGame >= 0.037) pontos += 16; // p50
+    if (m.participationPerGame >= 0.196) pontos += 20; // p90
+    else if (m.participationPerGame >= 0.148) pontos += 12; // p75
     if (!ofensivo) pontos += 15; // meia central
     if (ofensivo) {
       if (m.participationPerGame >= 0.25) pontos += 20;
@@ -781,10 +1054,14 @@ public final class HeuristicsEngine {
 
   private static double scorePasMeia(Metrics m) {
     double pontos = 0;
-    if (m.assistsPerGame >= 0.10) pontos += 35;
-    else if (m.assistsPerGame >= 0.07) pontos += 25;
+    // v8.0 — limiares descidos para os percentis reais (p90=0.091, p75=0.063).
+    if (m.assistsPerGame >= 0.091) pontos += 35;
+    else if (m.assistsPerGame >= 0.063) pontos += 25;
+    else if (m.assistsPerGame >= 0.037) pontos += 12;
     if (m.disciplineIndex >= 0.80) pontos += 20;
-    if (m.minsPerGame >= 75) pontos += 15;
+    // v8.0: 75 min/jogo era p95 para meias — praticamente inalcançável.
+    if (m.minsPerGame >= 73) pontos += 15;   // p90 real
+    else if (m.minsPerGame >= 68) pontos += 8; // p75 real
     // Bônus arquétipo Fin/Pas: meia ofensivo clássico "10 goleador".
     // Threshold elevado de 0.12 → 0.17: com 0.12, quase todo meia produtivo
     // ativava o bônus, fazendo Pas sempre bater Fin/Dri no segundo slot e
@@ -798,13 +1075,22 @@ public final class HeuristicsEngine {
     // Guard age > 0: age=0 no JSON significa "não cadastrado" — não deve
     // disparar o bônus de "jovem" que contamina a distribuição de características
     // em ligas com dados escassos (ex: Nova Zelândia).
-    if (m.age != null && m.age > 0 && m.age <= 27) pontos += 30;
+    // v8.0 — RECALIBRADO. Duas correções:
+    //   1. O bônus "+20 se height <= 1.78" era quase gratuito: a mediana de
+    //      altura de um meia é 1,76m, então quase todo meia o recebia. É o mesmo
+    //      defeito já corrigido em scoreVelVol na v5.x. Removido.
+    //   2. O corte único de idade em 27 dava +30 num degrau só. Agora escalonado,
+    //      para que "jovem" module o score em vez de decidi-lo.
+    if (m.age != null && m.age > 0) {
+      if (m.age <= 23) pontos += 28;
+      else if (m.age <= 26) pontos += 18;
+      else if (m.age <= 28) pontos += 8;
+      else if (m.age >= 33) pontos -= 15;
+      else if (m.age >= 30) pontos -= 8;
+    }
     if (m.participationPerGame >= 0.15) pontos += 25;
-    // Guard height > 0: height=null no JSON vira 0.0 em double Java,
-    // e 0.0 <= 1.78 seria TRUE — dando bônus de "baixo" para todos sem dado.
-    if (m.height > 0 && m.height <= 1.78) pontos += 20;
     if (ofensivo) pontos += 15;
-    return pontos;
+    return Math.max(0, pontos);
   }
 
   private static double scoreDriMeia(Metrics m, boolean ofensivo) {
@@ -817,7 +1103,9 @@ public final class HeuristicsEngine {
     else if (m.participationPerGame >= 0.20) pontos += 20;
     // Guards age > 0 e height > 0: mesma razão que scoreVelMeia.
     if (m.age != null && m.age > 0 && m.age <= 28) pontos += 25;
-    if (m.height > 0 && m.height <= 1.75) pontos += 20;
+    // v8.0: limiar de altura baixado de 1.75 para 1.72. Com 1.75 o bônus atingia
+    // cerca de metade dos meias (mediana real 1,76m), inflando Dri por default.
+    if (m.height > 0 && m.height <= 1.72) pontos += 20;
     if (m.assistsPerGame >= 0.10) pontos += 20;
     // Penalidade para meia ofensivo goleador antecipada de 0.15 → 0.12:
     // meias com perfil goleador moderado (gpg >= 0.12) já têm Fin/Arm como
@@ -843,12 +1131,24 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreDesMeia(Metrics m) {
+    // v8.0 — RECALIBRADO. O modelo anterior dava 55 pontos medianos a qualquer
+    // meia central, fazendo Des vencer o slot principal em 64% deles e Des/Vel
+    // responder por 67% dos M_CENTRAL. Três causas, todas corrigidas aqui:
+    //   1. "+20 por não ser meia ofensivo" era um bônus de IDENTIDADE, não de
+    //      evidência: todo meia central ganhava de graça. Removido.
+    //   2. "+10 por gpg <= 0.05" premiava AUSÊNCIA de evidência ofensiva como se
+    //      fosse evidência defensiva. Removido.
+    //   3. O corte único de cartões em 0.10 disparava para ~80% dos meias
+    //      (mediana real = 0.156). Agora escalonado sobre percentis reais
+    //      medidos em 390 meias centrais: p50=0.156, p75=0.204, p90=0.250.
     double pontos = 0;
-    if (m.yellowPerGame >= 0.10) pontos += 25;
-    if (!isMeiaOfensivo(m)) pontos += 20; // meia central
+    if (m.yellowPerGame >= 0.25) pontos += 45;        // p90 — desarmador de verdade
+    else if (m.yellowPerGame >= 0.20) pontos += 32;   // p75
+    else if (m.yellowPerGame >= 0.156) pontos += 18;  // p50
+    if (m.disciplineIndex >= 0.70) pontos += 15;
+    // Secundária de volante continua sendo evidência posicional legítima.
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
       pontos += 25;
-    if (m.goalsPerGame <= 0.05) pontos += 10;
     if (m.participationPerGame >= 0.15) pontos -= 20;
     return Math.max(0, pontos);
   }
@@ -949,10 +1249,14 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreResAtac(Metrics m, boolean centroavante) {
+    // Percentis de centroavante: p75=62, p90=66, p95=69. O corte antigo de 80
+    // era literalmente inalcançável nesta posição (código morto).
     double pontos = 0;
-    if (m.minsPerGame >= 85) pontos += 35;
-    else if (m.minsPerGame >= 80) pontos += 25;
-    if (m.regularity >= 0.75) pontos += 20;
+    if (m.minsPerGame >= 69) pontos += 45;
+    else if (m.minsPerGame >= 66) pontos += 36;
+    else if (m.minsPerGame >= 62) pontos += 24;
+    if (m.regularity >= 0.94) pontos += 30;       // p90
+    else if (m.regularity >= 0.90) pontos += 20;  // p75
     if (centroavante) pontos += 15;
     return pontos;
   }
@@ -987,6 +1291,22 @@ public final class HeuristicsEngine {
         // Lateral Ofensivo: foco em Cru + Vel. Vel/Pas compartilhado com LAT_DEF.
         set.addAll(List.of(
             "Cru/Vel","Vel/Cru","Cru/Fin","Cru/Pas","Vel/Pas"));
+        break;
+
+      case "LAT_GEN":
+        // v9.0 — Lateral SEM amostra estatística: união dos dois pools.
+        //
+        // A v7.0 fazia esses jogadores caírem em LAT_OF, porque o default antigo
+        // (LAT_DEF) tornava Vel/Cru e Cru/Vel inalcançáveis. Mas LAT_OF tem só 5
+        // pares, e isso deixava de fora Vel/Mar (10,5% do prior) e Cru/Mar (9,7%)
+        // — por isso o lateral era a posição com pior aderência no fallback.
+        //
+        // Sem estatísticas não há como saber se o jogador é ofensivo ou
+        // defensivo, então a resposta honesta é não escolher: usa-se a união dos
+        // dois pools e deixa-se os priors empíricos da posição — que já embutem
+        // a proporção real entre os dois perfis — fazerem a ponderação.
+        set.addAll(getAllowedCombinations("LAT_DEF"));
+        set.addAll(getAllowedCombinations("LAT_OF"));
         break;
 
       case "ZAG_NORMAL":
@@ -1120,6 +1440,15 @@ public final class HeuristicsEngine {
       // Sem secundária clara: "ala" → ofensivo por padrão; caso contrário, heurística
       String pLow = m.posText.toLowerCase(Locale.ROOT);
       if (pLow.contains("ala")) return "LAT_OF";
+      // v9.0 (revisa a v7.0): participationPerGame é estruturalmente 0 para quem
+      // não tem amostra, então o default antigo mandava TODO lateral sem
+      // estatísticas para LAT_DEF — cujo pool não contém Vel/Cru nem Cru/Vel, os
+      // dois pares mais comuns em laterais reais. A v7.0 corrigiu com LAT_OF,
+      // mas esse pool tem apenas 5 pares e exclui Vel/Mar e Cru/Mar, que juntos
+      // valem 20% do prior da posição. Agora usa-se LAT_GEN (união dos dois
+      // pools), deixando os priors decidirem. Só alcança o fallback, já que
+      // played < MIN_FALLBACK_SAMPLE.
+      if (m.played < MIN_FALLBACK_SAMPLE) return "LAT_GEN";
       return (m.participationPerGame >= 0.08) ? "LAT_OF" : "LAT_DEF";
     }
 
@@ -1454,7 +1783,7 @@ public final class HeuristicsEngine {
     if (profile == null) return 4;
     switch (profile) {
       case "GK":                      return 0;
-      case "LAT_DEF": case "LAT_OF":  return 1;
+      case "LAT_DEF": case "LAT_OF": case "LAT_GEN":  return 1;
       case "ZAG_NORMAL": case "ZAG_OFENSIVO": return 2;
       case "VOL":
       case "M_CENTRAL":
@@ -1511,32 +1840,190 @@ public final class HeuristicsEngine {
     return h;
   }
 
+  // ── v7.0: Priors empíricos por posição ────────────────────────────────────
+  //
+  // MOTIVAÇÃO (medida em 8.816 jogadores de BRA1/BRA2/BRA3/ARG2/GR1/GRS2/MEXA):
+  // o fallback v6.0 usava peso-base FIXO (10.0) para todo par do pool, o que faz
+  // a distribuição de saída ser aproximadamente uniforme sobre o pool. Já o
+  // caminho de scoring produz uma distribuição bem diferente. Resultado medido:
+  //
+  //   característica   fallback   scoring    (jogadores com >=3 jogos)
+  //   Pas                15.8%      5.9%     ← fallback inflava características
+  //   Res                 7.2%      0.3%       "fracas" no Brasfoot
+  //   Vel                 8.6%     18.9%     ← e suprimia as "fortes"
+  //   Fin                 8.8%     14.8%
+  //   Cab                 1.9%      7.5%
+  //   Cru                 0.8%      5.4%
+  //
+  // Ou seja: elencos com poucas estatísticas (México 49% e Grécia 47% dos
+  // jogadores sem jogos) recebiam sistematicamente características piores que
+  // elencos bem documentados — exatamente o desbalanceamento a corrigir.
+  //
+  // A correção é usar como peso-base a frequência EMPÍRICA com que o caminho de
+  // scoring escolhe cada par naquela posição, em vez de 10.0 fixo. As afinidades
+  // por atributo (charAffinity) continuam aplicadas por cima, então altura/idade
+  // seguem individualizando o jogador — o prior só corrige o ponto de partida.
+  //
+  // SUAVIZAÇÃO: usa-se 80% do prior empírico + 20% de peso uniforme
+  // (PRIOR_BLEND). Isso preserva o formato da distribuição real sem copiar
+  // exageros do scoring (ex.: Des/Vel responde por 29% dos meias, o que parece
+  // excesso do scoreDes e não uma verdade do futebol — ver relatório).
+  //
+  // Valores = % de ocorrência no caminho de scoring, agregados sobre as 7 ligas.
+  // Pares legais no pool mas nunca escolhidos pelo scoring recebem PRIOR_FLOOR
+  // (não zero: mantêm variedade).
+  //
+  // v7.1 — ESTABILIDADE ENTRE LIGAS: o ranking dos pares dominantes se repete em
+  // todas as ligas, mas a magnitude varia bastante (ex.: Fin/Vel para atacantes
+  // oscila de 15% a 38% entre ligas; SGo/Ref para goleiros, de 9% a 21%, porque
+  // goleiros brasileiros têm mediana 1,90m contra 1,87m das demais). Essa
+  // dispersão real é a razão de manter PRIOR_BLEND abaixo de 1.0: o prior indica
+  // a forma da distribuição, não um alvo exato a ser replicado.
+
+  /** Peso de piso para pares que o scoring nunca escolheu, em % (mantém variedade). */
+  private static final double PRIOR_FLOOR = 1.5;
+
+  /** Mistura prior empírico × uniforme: 0.80 = 80% empírico, 20% uniforme. */
+  private static final double PRIOR_BLEND = 0.80;
+
+  /** Peso uniforme de referência (média aproximada de um pool de ~12 pares). */
+  private static final double PRIOR_UNIFORM = 8.0;
+
+  private static final Map<Integer, Map<String, Double>> EMPIRICAL_PRIORS = buildEmpiricalPriors();
+
+  private static Map<Integer, Map<String, Double>> buildEmpiricalPriors() {
+    Map<Integer, Map<String, Double>> byPos = new HashMap<>();
+
+    // ── Goleiro (n=462) ──
+    Map<String, Double> gk = new HashMap<>();
+    gk.put("SGo/Ref", 22.3); gk.put("SGo/Col", 15.4); gk.put("Ref/Col", 11.9);
+    gk.put("Ref/SGo", 11.7); gk.put("Col/Ref", 8.9); gk.put("Col/SGo", 7.4);
+    gk.put("DPe/Col", 5.4); gk.put("Ref/DPe", 5.2); gk.put("SGo/DPe", 3.5);
+    gk.put("Col/DPe", 3.0); gk.put("DPe/Ref", 2.8); gk.put("DPe/SGo", 2.6);
+    byPos.put(0, gk);
+
+    // ── Lateral (n=725) ──
+    Map<String, Double> lat = new HashMap<>();
+    lat.put("Cru/Vel", 17.1); lat.put("Vel/Cru", 16.4); lat.put("Cru/Pas", 13.0);
+    lat.put("Cru/Fin", 11.2); lat.put("Cru/Mar", 10.3); lat.put("Vel/Mar", 10.2);
+    lat.put("Vel/Pas", 9.1); lat.put("Mar/Fin", 4.1); lat.put("Mar/Vel", 3.0);
+    lat.put("Mar/Cru", 2.9); lat.put("Cru/Des", 1.5); lat.put("Pas/Vel", 1.5);
+    byPos.put(1, lat);
+
+    // ── Zagueiro (n=780) ──
+    Map<String, Double> zag = new HashMap<>();
+    zag.put("Des/Mar", 29.9); zag.put("Mar/Pas", 13.1); zag.put("Mar/Des", 11.9);
+    zag.put("Des/Cab", 9.1); zag.put("Des/Pas", 7.6); zag.put("Mar/Res", 6.5);
+    zag.put("Mar/Cab", 6.0); zag.put("Mar/Vel", 5.4); zag.put("Des/Res", 3.7);
+    zag.put("Cab/Des", 3.6); zag.put("Cab/Mar", 3.2);
+    byPos.put(2, zag);
+
+    // ── Meio-campo (n=1323) ──
+    Map<String, Double> mei = new HashMap<>();
+    mei.put("Des/Vel", 13.8); mei.put("Arm/Pas", 13.1); mei.put("Fin/Pas", 11.4);
+    mei.put("Mar/Pas", 7.9); mei.put("Fin/Dri", 7.8); mei.put("Des/Mar", 6.7);
+    mei.put("Des/Pas", 5.4); mei.put("Dri/Pas", 4.8); mei.put("Arm/Vel", 4.5);
+    mei.put("Fin/Arm", 4.2); mei.put("Mar/Des", 4.1); mei.put("Arm/Fin", 3.8);
+    mei.put("Pas/Dri", 2.7); mei.put("Arm/Dri", 2.3); mei.put("Mar/Fin", 2.2);
+    mei.put("Mar/Res", 2.0); mei.put("Des/Fin", 1.5); mei.put("Des/Res", 1.5);
+    mei.put("Vel/Pas", 1.5);
+    byPos.put(3, mei);
+
+    // ── Atacante (n=1280) ──
+    Map<String, Double> ata = new HashMap<>();
+    ata.put("Fin/Vel", 32.4); ata.put("Fin/Cab", 25.5); ata.put("Vel/Dri", 19.7);
+    ata.put("Cab/Vel", 7.5); ata.put("Fin/Dri", 5.5); ata.put("Cab/Fin", 4.5);
+    ata.put("Vel/Fin", 3.0); ata.put("Fin/Res", 1.5); ata.put("Dri/Pas", 1.5);
+    ata.put("Dri/Fin", 1.5);
+    byPos.put(4, ata);
+
+    return byPos;
+  }
+
+  /**
+   * Peso-base de um par, já misturado entre o prior empírico da posição e o
+   * peso uniforme. Substitui o antigo valor fixo 10.0 do v6.0.
+   *
+   * @param pos posição Brasfoot resolvida (0=GK, 1=LAT, 2=ZAG, 3=MEI, 4=ATA)
+   */
+  private static double basePairWeight(String pair, int pos) {
+    Map<String, Double> priors = EMPIRICAL_PRIORS.get(pos);
+    double empirical = (priors == null) ? PRIOR_UNIFORM
+        : priors.getOrDefault(pair, PRIOR_FLOOR);
+    return PRIOR_BLEND * empirical + (1.0 - PRIOR_BLEND) * PRIOR_UNIFORM;
+  }
+
+  // ── v7.0: Imputação de altura ─────────────────────────────────────────────
+  //
+  // MOTIVAÇÃO: a altura é o sinal mais forte do fallback, mas falta em 38% dos
+  // jogadores da Grécia (e 17% da Argentina). Quando height=0, o v6.0
+  // neutralizava TODOS os bônus de altura, deixando esses jogadores praticamente
+  // sem sinal — 30% do elenco grego caía em "sem altura E sem estatísticas".
+  //
+  // Em vez de neutralizar, imputa-se a mediana da posição, medida em 3.506
+  // jogadores com altura conhecida de 5 ligas (ARG2, GR1, GRS2, MEXA, BRA1).
+  // Como é estimativa e não dado real, a afinidade derivada dela entra com peso
+  // reduzido (IMPUTED_HEIGHT_DAMPING) — melhor que nada, pior que o dado real.
+  //
+  // IMPORTANTE: usada SOMENTE no fallback. O caminho de scoring por estatísticas
+  // continua lendo m.height cru, sem imputação.
+
+  /** Fator aplicado à afinidade de altura quando a altura foi imputada. */
+  private static final double IMPUTED_HEIGHT_DAMPING = 0.5;
+
+  /**
+   * Retorna a altura a usar no fallback: a real quando existe, senão a mediana
+   * da posição. Medianas de 5.458 jogadores com altura conhecida (7 datasets:
+   * BRA1, BRA2, BRA3, ARG2, GR1, GRS2, MEXA):
+   *   GK 1,89 | ZAG 1,86 | CA 1,83 | VOL 1,79 | Defensor genérico 1,78
+   *   LAT 1,77 | Atacante genérico 1,77 | Ponta 1,76 | MEI 1,76
+   */
+  private static double effectiveHeight(Metrics m) {
+    if (m.height > 0) return m.height;
+    String p = m.posText.toLowerCase(Locale.ROOT);
+    if (p.contains("goleiro")) return 1.89;
+    if (p.contains("zagueiro")) return 1.86;
+    if (p.contains("centroavante")) return 1.83;
+    if (p.contains("volante")) return 1.79;
+    if (p.contains("defensor") || p.contains("defesa")) return 1.78;
+    if (p.contains("lateral") || p.contains("ala")) return 1.77;
+    if (p.contains("atacante")) return 1.77;
+    if (p.contains("ponta")) return 1.76;
+    if (p.contains("meia") || p.contains("meio")) return 1.76;
+    return 1.78; // mediana geral de jogadores de linha
+  }
+
   /**
    * Afinidade de UMA característica (por nome, ex. "Vel") com os atributos
    * estáticos do jogador. Retorna um delta somado ao peso-base do par.
    *
    * Sinais usados (todos disponíveis mesmo para jogadores sem stats):
-   *   - Altura (m.height, em metros; 0 quando ausente)
+   *   - Altura (real do JSON ou imputada pela mediana da posição — v7.0)
    *   - Idade  (m.age, Integer; null quando ausente)
    *   - Posições secundárias (m.secondary)
    *
-   * Calibração validada contra o elenco real do Brasileirão 2026:
-   *   Zagueiros média 1,87m | Pontas média 1,74-1,75m | Goleiros média 1,92m.
+   * Calibração validada contra elencos reais de BRA1, ARG2, GR1, GRS2 e MEXA:
+   *   Goleiros 1,88m | Zagueiros 1,86m | Laterais 1,77m | Meias/Pontas 1,75m.
    */
   private static double charAffinity(String c, Metrics m, boolean isGk) {
+    // wh acumula termos derivados da ALTURA; w acumula idade/secundárias.
+    // Quando a altura é imputada (v7.0), só wh entra amortecido — idade e
+    // posições secundárias são dados reais e mantêm peso integral.
     double w = 0.0;
-    double h = m.height;          // metros; 0.0 = desconhecida
+    double wh = 0.0;
+    double h = effectiveHeight(m);
+    boolean imputed = (m.height <= 0);
     Integer age = m.age;
     String sec = String.join(" ", m.secondary).toLowerCase(Locale.ROOT);
 
     if (isGk) {
       switch (c) {
         case "SGo":
-          if (h >= 1.92) w += 10;        // goleiro gigante domina a área
-          else if (h >= 1.88) w += 5;
+          if (h >= 1.92) wh += 10;        // goleiro gigante domina a área
+          else if (h >= 1.88) wh += 5;
           break;
         case "Ref":
-          if (h > 0 && h < 1.88) w += 5; // goleiro baixo compensa com reflexo
+          if (h < 1.88) wh += 5;          // goleiro baixo compensa com reflexo
           if (age != null && age <= 24) w += 3;
           break;
         case "Col":
@@ -1544,11 +2031,19 @@ public final class HeuristicsEngine {
           else if (age != null && age >= 26) w += 3;
           break;
         case "DPe":
-          if (h >= 1.90) w += 2;         // envergadura ajuda em pênaltis
+          if (h >= 1.90) wh += 2;         // envergadura ajuda em pênaltis
+          // v10.0: alinhado ao scoreDPe, que deixou de ser um contador de idade
+          // mas segue sendo um atributo de goleiro rodado. Sem estatística
+          // nenhuma, um goleiro de 17 anos não tem como evidenciar defesa de
+          // pênalti — antes disso a base recebia DPe como característica
+          // principal com frequência.
+          if (age != null && age <= 20) w -= 9;
+          else if (age != null && age <= 23) w -= 5;
+          else if (age != null && age >= 30) w += 5;
           break;
         default: break;
       }
-      return w;
+      return w + wh * (imputed ? IMPUTED_HEIGHT_DAMPING : 1.0);
     }
 
     // ── Jogadores de linha ──────────────────────────────────────────────────
@@ -1560,8 +2055,8 @@ public final class HeuristicsEngine {
           if (age >= 34) w -= 10;        // veterano raramente é "velocista"
           else if (age >= 31) w -= 7;
         }
-        if (h > 0 && h <= 1.74) w += 3;  // baixinhos tendem a ser rápidos
-        if (h >= 1.90) w -= 3;
+        if (h <= 1.74) wh += 3;          // baixinhos tendem a ser rápidos
+        if (h >= 1.90) wh -= 3;
         break;
 
       case "Res":
@@ -1569,15 +2064,15 @@ public final class HeuristicsEngine {
         break;
 
       case "Cab":
-        if (h >= 1.90) w += 10;
-        else if (h >= 1.85) w += 6;
-        else if (h >= 1.80) w += 2;
-        else if (h > 0 && h <= 1.75) w -= 8; // 1,70m cabeceador não faz sentido
+        if (h >= 1.90) wh += 10;
+        else if (h >= 1.85) wh += 6;
+        else if (h >= 1.80) wh += 2;
+        else if (h <= 1.75) wh -= 8;     // 1,70m cabeceador não faz sentido
         break;
 
       case "Dri":
-        if (h > 0 && h <= 1.72) w += 7;  // perfil clássico do driblador baixo
-        else if (h > 0 && h <= 1.76) w += 4;
+        if (h <= 1.72) wh += 7;          // perfil clássico do driblador baixo
+        else if (h <= 1.76) wh += 4;
         if (age != null && age <= 24) w += 2;
         // Ponta que atua nos dois lados (invertido) → perfil de drible
         if (sec.contains("ponta")) w += 2;
@@ -1594,7 +2089,7 @@ public final class HeuristicsEngine {
         break;
 
       case "Mar":
-        if (h >= 1.85) w += 3;
+        if (h >= 1.85) wh += 3;
         break;
 
       case "Fin":
@@ -1608,22 +2103,27 @@ public final class HeuristicsEngine {
 
       default: break;
     }
-    return w;
+    return w + wh * (imputed ? IMPUTED_HEIGHT_DAMPING : 1.0);
   }
 
   /**
    * Sorteio ponderado de um par dentro de um pool.
-   * Peso do par = max(1, 10 + afinidade(c1) + afinidade(c2)).
+   * Peso do par = max(1, priorEmpirico(par, pos) + afinidade(c1) + afinidade(c2)).
    * O rng deve vir seedado com stableSeed(m) para reprodutibilidade.
+   *
+   * @param resolvedPos posição Brasfoot já resolvida — define qual tabela de
+   *                    priors empíricos (v7.0) se aplica.
    */
   private static String weightedDrawFromPool(Set<String> pool, Metrics m,
-                                             boolean isGk, Random rng) {
+                                             boolean isGk, Random rng, int resolvedPos) {
     List<String> pairs = new ArrayList<>(pool);
     double[] weights = new double[pairs.size()];
     double total = 0;
     for (int i = 0; i < pairs.size(); i++) {
-      String[] parts = pairs.get(i).split("/");
-      double w = 10.0;
+      String pair = pairs.get(i);
+      String[] parts = pair.split("/");
+      // v7.0: peso-base vem do prior empírico da posição (antes era fixo 10.0)
+      double w = basePairWeight(pair, resolvedPos);
       if (parts.length == 2) {
         w += charAffinity(parts[0], m, isGk) + charAffinity(parts[1], m, isGk);
       }
@@ -1662,13 +2162,21 @@ public final class HeuristicsEngine {
     boolean isGk = false;
 
     if ("GENERIC_DEF".equals(profile)) {
-      // Escolha ponderada do subperfil defensivo por altura e secundárias
-      String[] subs = {"LAT_DEF", "LAT_OF", "ZAG_NORMAL", "ZAG_OFENSIVO"};
-      double[] w = {10, 10, 10, 5};
-      double h = m.height;
+      // Escolha ponderada do subperfil defensivo por altura e secundárias.
+      // v7.0: LAT_OF entra com peso maior que LAT_DEF pelo mesmo motivo do
+      // default de detectProfile — laterais reais recebem pares ofensivos
+      // (Cru/Vel) com muito mais frequência que pares puramente defensivos.
+      // v7.0: usa effectiveHeight, para que a mediana imputada também oriente
+      // a escolha quando o JSON não traz altura (38% dos jogadores gregos).
+      // v9.0: LAT_GEN (união dos pools de lateral) substitui o par LAT_DEF/LAT_OF,
+      // pela mesma razão do default de detectProfile — sem amostra não há base
+      // para escolher entre lateral ofensivo e defensivo.
+      String[] subs = {"LAT_GEN", "LAT_GEN", "ZAG_NORMAL", "ZAG_OFENSIVO"};
+      double[] w = {6, 14, 10, 5};
+      double h = effectiveHeight(m);
       String sec = String.join(" ", m.secondary).toLowerCase(Locale.ROOT);
-      if (h >= 1.86) { w[2] += 20; w[3] += 8; w[0] -= 6; w[1] -= 6; }
-      else if (h > 0 && h <= 1.79) { w[0] += 12; w[1] += 12; w[2] -= 6; w[3] -= 4; }
+      if (h >= 1.86) { w[2] += 20; w[3] += 8; w[0] -= 4; w[1] -= 8; }
+      else if (h <= 1.79) { w[0] += 8; w[1] += 16; w[2] -= 6; w[3] -= 4; }
       if (sec.contains("zague")) { w[2] += 10; w[3] += 4; }
       if (sec.contains("meia") || sec.contains("ponta")) { w[1] += 10; }
       double total = 0;
@@ -1717,7 +2225,7 @@ public final class HeuristicsEngine {
     // GK também pode chegar aqui via pool genérico — garante flag correta
     if (resolvedPos == 0) isGk = true;
 
-    String chosenPair = weightedDrawFromPool(pool, m, isGk, rng);
+    String chosenPair = weightedDrawFromPool(pool, m, isGk, rng, resolvedPos);
     int[] pair = parseCharPair(chosenPair);
 
     if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted [" + profile + "]: sorteou "
