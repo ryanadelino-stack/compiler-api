@@ -2,7 +2,41 @@
 // Pacote: br.brasfoot.compiler
 //
 // Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v7.0
-// Outubro 2026 – Versão 12.0 — Combinações Inalcançáveis
+// Outubro 2026 – Versão 12.2 — Armação e Finalização Simétricas
+//
+// Mudanças v12.2 — no perfil M_OFENSIVO, Fin/Arm superava Arm/Fin (169 contra
+// 134) por três motivos somados, nenhum deles futebol:
+//   - scoreFinMeia dava "+20 por ser meia ofensivo" — bônus de IDENTIDADE que
+//     100% do perfil recebia, a mesma classe já removida do centroavante
+//     (v12.0), do ponta (v12.0), do volante (v11.0) e do zagueiro (v9.0)
+//   - scoreArmMeia dava "+15 por NÃO ser ofensivo" — o inverso, de modo que o
+//     meia ofensivo era o único a não receber. Juntos, 35 pontos contra Arm
+//     exatamente no perfil onde criar mais importa
+//   - a escada de Arm usava os percentis do MEIA CENTRAL: o topo (0.112) é
+//     apenas o p75 do meia ofensivo, então um criador de elite (0.205, o p95
+//     do perfil) recebia a mesma nota de alguém em 0.112
+//   Agora cada escada usa os percentis do seu próprio perfil e a ordem entre
+//   Arm e Fin é decidida pela produção real: Arm/Fin passa a 183 contra 134 de
+//   Fin/Arm, com assistências medianas de 0.119 contra 0.062
+//   - Priors regerados a partir deste scoring
+//
+// Mudanças v12.1 — Varredura Final
+//
+// Mudanças v12.1 — varredura de TODAS as condições do motor contra os
+// percentis reais das 10 ligas, fechando os últimos resíduos:
+//   - quatro cortes de disciplina ainda disparavam para praticamente todos:
+//     scoreDesMeia (0.70 → 100%), scoreMarLat (0.70 → 99,8%),
+//     scorePasLat (0.80 → 99,3%), scorePasMeia (0.80 → 99,2%)
+//   - scoreMarLat tinha ainda o "+20 por marcar poucos gols" (prêmio por
+//     ausência de evidência) E uma penalidade fixa de -40 no fim, o mesmo
+//     instrumento errado já retirado de scoreDesLat na v12.0
+//   - minutesPerGoal removido de scoreFinLat, scoreFinVol e scoreFinMeia:
+//     é goals/minutos invertido, somado junto da escada de goalsPerGame
+//   - scoreCruLat contava assistência em TRÊS blocos (escada + bônus solto +
+//     combo com jogos), inflando o par dominante do lateral
+//   - Priors regerados a partir deste scoring
+//
+// Mudanças v12.0 — Combinações Inalcançáveis
 //
 // Mudanças v12.0 — diagnóstico sobre as 3 divisões norte-americanas (MLS1,
 // USL, USC3; 2.620 jogadores), focado em combinações que o jogo permite mas
@@ -175,7 +209,7 @@ import java.util.stream.Collectors;
 
 public final class HeuristicsEngine {
 
-  public static final String HEURISTICS_ENGINE_MARKER = "V12.0-COMBINACOES-INALCANCAVEIS";
+  public static final String HEURISTICS_ENGINE_MARKER = "V12.2-ARM-FIN-SIMETRICO";
 
   private static final boolean DEBUG =
       Boolean.parseBoolean(System.getProperty("brasfoot.debug", "false"));
@@ -886,9 +920,15 @@ public final class HeuristicsEngine {
     else if (m.assistsPerGame >= 0.040) pontos += 22; // p50
     else if (m.assistsPerGame >= 0.018) pontos += 12; // p25
     if (isLateralOfensivo(m)) pontos += 25;
-    if (m.participationPerGame >= 0.12) pontos += 15;
-    if (m.assistsPerGame >= 0.08) pontos += 20;
-    if (m.played >= 300 && m.assistsPerGame >= 0.05) pontos += 15;
+    // v12.1: REMOVIDOS o "assistsPerGame >= 0.08 -> +20" e o
+    // "played >= 300 && assistsPerGame >= 0.05 -> +15". Somados à escada acima,
+    // a assistência era contada TRÊS vezes — e Cruzamento é a característica
+    // definidora do lateral, então a inflação se concentrava no par dominante
+    // da posição (Cru/Vel chegava a 46% do perfil LAT_OF).
+    // A participação permanece: ela inclui gols, então não é a mesma grandeza.
+    if (m.participationPerGame >= 0.169) pontos += 20;      // p90
+    else if (m.participationPerGame >= 0.122) pontos += 12; // p75
+    if (m.played >= 300) pontos += 10;
     return pontos;
   }
 
@@ -905,25 +945,61 @@ public final class HeuristicsEngine {
 
   private static double scorePasLat(Metrics m) {
     double pontos = 0;
-    if (m.assistsPerGame >= 0.10) pontos += 50;
-    else if (m.assistsPerGame >= 0.08) pontos += 35;
-    else if (m.assistsPerGame >= 0.05) pontos += 25;
+    // v12.1: limiares nos percentis reais de 1.020 laterais
+    // (assist/jogo p50=0.048 p75=0.075 p90=0.102 p95=0.125).
+    if (m.assistsPerGame >= 0.125) pontos += 58;      // p95
+    else if (m.assistsPerGame >= 0.102) pontos += 47; // p90
+    else if (m.assistsPerGame >= 0.075) pontos += 34; // p75
+    else if (m.assistsPerGame >= 0.048) pontos += 20; // p50
+    else if (m.assistsPerGame >= 0.024) pontos += 10; // p25
     if (isLateralOfensivo(m)) pontos += 20;
-    if (m.disciplineIndex >= 0.80) pontos += 15;
-    if (m.played >= 300 && m.assistsPerGame >= 0.10) pontos += 30;
+    // v12.1: o corte de disciplina em 0.80 disparava para 99,3%. Subido ao p75.
+    if (m.disciplineIndex >= 0.938) pontos += 15;
+    // v12.1: REMOVIDO o "played >= 300 && apg >= 0.10 -> +30", que somava de
+    // novo a assistência já contada na escada acima.
     return pontos;
   }
 
   private static double scoreMarLat(Metrics m) {
     double pontos = 0;
-    if (m.yellowPerGame >= 0.10) pontos += 30;
+    // ── v12.1: últimos bônus grátis de disciplina e dupla contagem ──────────
+    //
+    // Varredura final de todas as condições do motor contra os percentis reais
+    // das 10 ligas. Restavam quatro cortes de disciplina que disparam para
+    // praticamente todo jogador da posição — pontos que ninguém deixa de ganhar,
+    // e portanto não ordenam nada:
+    //   scoreDesMeia  disciplineIndex >= 0.70  → 100,0% dos meias
+    //   scoreMarLat   disciplineIndex >= 0.70  →  99,8% dos laterais
+    //   scorePasLat   disciplineIndex >= 0.80  →  99,3%
+    //   scorePasMeia  disciplineIndex >= 0.80  →  99,2%
+    // Percentis reais: lateral p50=0.911 p75=0.938 p90=0.958 |
+    //                  meia    p50=0.924 p75=0.948 p90=0.969.
+    // v12.1: além do corte de disciplina em 0.70 (99,8%), havia o
+    // "+20 por marcar poucos gols" — prêmio por AUSÊNCIA de evidência ofensiva,
+    // o mesmo defeito já removido de scoreDesMeia (v8) e scoreMarZag (v9).
+    // Mar de lateral passa a medir o que mede no zagueiro: posicionamento e
+    // constância (disciplina, regularidade, minutos), sem prêmio por cartão.
+    // A escala cobre do p25 ao p90: remover os bônus grátis é para a métrica
+    // DISCRIMINAR, não para apagar a característica. Sem a faixa de entrada,
+    // Mar colapsava para zero na mediana e Des vencia por omissão.
+    if (m.disciplineIndex >= 0.958) pontos += 52;      // p90
+    else if (m.disciplineIndex >= 0.938) pontos += 40; // p75
+    else if (m.disciplineIndex >= 0.911) pontos += 28; // p50
+    else if (m.disciplineIndex >= 0.886) pontos += 15; // p25
     if (isLateralDefensivo(m)) pontos += 25;
-    if (m.goalsPerGame <= 0.05) pontos += 20;
-    if (m.disciplineIndex >= 0.70) pontos += 15;
+    if (m.regularity >= 0.89) pontos += 26;            // p90
+    else if (m.regularity >= 0.84) pontos += 18;       // p75
+    else if (m.regularity >= 0.77) pontos += 10;       // p50
     if (m.played >= 150) pontos += 10;
-    if (m.goalsPerGame >= 0.05) pontos -= 15;
-    if (m.participationPerGame >= 0.10) pontos -= 10;
-    pontos -= 40; // penalidade massiva
+    // v12.1: REMOVIDA a penalidade fixa de -40 no fim da função — o mesmo
+    // instrumento errado já retirado de scoreDesLat na v12.0. Um corte fixo
+    // zera a métrica em vez de ordená-la: com ele, Mar ficava em 0 para mais da
+    // metade dos laterais e Des vencia por omissão. A penalidade por produção
+    // ofensiva vira graduada, nos percentis reais de 1.020 laterais
+    // (particip/jogo p50=0.083 p75=0.122 p90=0.169).
+    if (m.participationPerGame >= 0.169) pontos -= 34;      // p90
+    else if (m.participationPerGame >= 0.122) pontos -= 22; // p75
+    else if (m.participationPerGame >= 0.083) pontos -= 11; // p50
     return Math.max(0, pontos);
   }
 
@@ -947,12 +1023,18 @@ public final class HeuristicsEngine {
     return Math.max(0, pontos);
   }
 
+  // v12.1: minutesPerGoal REMOVIDO destas três funções (aqui, scoreFinVol e
+  // scoreFinMeia). Minutos por gol é goals/minutos invertido — somá-lo junto da
+  // escada de goalsPerGame é contar a mesma evidência duas vezes, exatamente o
+  // que foi corrigido em scoreFinAtac na v12.0.
   private static double scoreFinLat(Metrics m) {
+    // Limiares nos percentis reais de 1.020 laterais
+    // (gols/jogo p50=0.031 p75=0.052 p90=0.083).
     double pontos = 0;
-    if (m.goalsPerGame >= 0.05) pontos += 40;
-    else if (m.goalsPerGame >= 0.03) pontos += 30;
+    if (m.goalsPerGame >= 0.083) pontos += 48;      // p90
+    else if (m.goalsPerGame >= 0.052) pontos += 36; // p75
+    else if (m.goalsPerGame >= 0.031) pontos += 20; // p50
     if (m.penaltyGoals > 0) pontos += 15;
-    if (m.mpg > 0 && m.mpg < 2000) pontos += 15;
     return pontos;
   }
 
@@ -1054,8 +1136,7 @@ public final class HeuristicsEngine {
     // Pênaltis cobrados indicam vocação ofensiva, mas não sobrepõem a taxa de gol
     if (m.penaltyGoals >= 3) pontos += 12;
     else if (m.penaltyGoals > 0) pontos += 5;
-    if (m.mpg > 0 && m.mpg < 1000) pontos += 15;  // threshold mais rigoroso (era 1500)
-    else if (m.mpg > 0 && m.mpg < 1500) pontos += 7;
+    // v12.1: minutesPerGoal removido — mesma grandeza de goalsPerGame invertida.
     return pontos;
   }
 
@@ -1094,16 +1175,41 @@ public final class HeuristicsEngine {
     // (assists/jogo p50=0.037, p75=0.063, p90=0.091, p95=0.112). Os cortes
     // anteriores (0.05 / 0.08 / 0.12) ficavam todos ACIMA da mediana, então o
     // armador típico pontuava zero e Arm nunca competia com Des.
-    if (m.assistsPerGame >= 0.112) pontos += 45;      // p95
-    else if (m.assistsPerGame >= 0.091) pontos += 38; // p90
-    else if (m.assistsPerGame >= 0.063) pontos += 28; // p75
-    else if (m.assistsPerGame >= 0.037) pontos += 16; // p50
-    if (m.participationPerGame >= 0.196) pontos += 20; // p90
-    else if (m.participationPerGame >= 0.148) pontos += 12; // p75
-    if (!ofensivo) pontos += 15; // meia central
+    // ── v12.2: Arm e Fin do meia deixam de ter escada e bônus assimétricos ──
+    //
+    // DIAGNÓSTICO: no perfil M_OFENSIVO, Fin/Arm aparecia em 169 jogadores
+    // contra 134 de Arm/Fin, e o motivo não era o futebol — eram três coisas
+    // somadas contra Arm:
+    //   1. scoreFinMeia dava "+20 por ser meia ofensivo" (bônus de IDENTIDADE,
+    //      100% do perfil) — a mesma classe já removida do centroavante, do
+    //      ponta, do volante e do zagueiro
+    //   2. scoreArmMeia dava "+15 por NÃO ser ofensivo" — o inverso, de modo
+    //      que o meia ofensivo era o único a não receber. Somados, 35 pontos
+    //      de desvantagem para Arm exatamente no perfil onde criar mais importa
+    //   3. a escada de Arm usava os percentis do MEIA CENTRAL (topo em 0.112),
+    //      que é apenas o p75 do meia ofensivo. Um criador de elite (0.205 =
+    //      p95 do perfil) recebia a mesma nota de alguém em 0.112 — saturava
+    //
+    // Agora cada escada usa os percentis DO SEU PRÓPRIO perfil, e a ordem entre
+    // Arm e Fin passa a ser decidida pelo que o jogador realmente faz.
+    //   meia ofensivo  assist/jogo p25=0.036 p50=0.076 p75=0.118 p90=0.165 p95=0.205
+    //   meia central   assist/jogo p25=0.023 p50=0.048 p75=0.083 p90=0.117 p95=0.139
     if (ofensivo) {
-      if (m.participationPerGame >= 0.25) pontos += 20;
-      if (m.assistsPerGame >= 0.10) pontos += 20;
+      if (m.assistsPerGame >= 0.205) pontos += 132;     // p95
+      else if (m.assistsPerGame >= 0.165) pontos += 116;// p90
+      else if (m.assistsPerGame >= 0.118) pontos += 97; // p75
+      else if (m.assistsPerGame >= 0.076) pontos += 76; // p50
+      else if (m.assistsPerGame >= 0.036) pontos += 48; // p25
+      if (m.participationPerGame >= 0.370) pontos += 22;      // p90
+      else if (m.participationPerGame >= 0.288) pontos += 14; // p75
+    } else {
+      if (m.assistsPerGame >= 0.139) pontos += 88;      // p95
+      else if (m.assistsPerGame >= 0.117) pontos += 74; // p90
+      else if (m.assistsPerGame >= 0.083) pontos += 57; // p75
+      else if (m.assistsPerGame >= 0.048) pontos += 38; // p50
+      else if (m.assistsPerGame >= 0.023) pontos += 19; // p25
+      if (m.participationPerGame >= 0.237) pontos += 22;      // p90
+      else if (m.participationPerGame >= 0.174) pontos += 14; // p75
     }
     // Meia goleador (gpg >= 0.15) é menos Arm e mais Fin — leve penalidade para
     // liberar Fin como característica principal nesses casos (v5.1).
@@ -1117,7 +1223,8 @@ public final class HeuristicsEngine {
     if (m.assistsPerGame >= 0.091) pontos += 35;
     else if (m.assistsPerGame >= 0.063) pontos += 25;
     else if (m.assistsPerGame >= 0.037) pontos += 12;
-    if (m.disciplineIndex >= 0.80) pontos += 20;
+    // v12.1: o corte em 0.80 disparava para 99,2% dos meias. Subido ao p75 real.
+    if (m.disciplineIndex >= 0.948) pontos += 20;
     // v8.0: 75 min/jogo era p95 para meias — praticamente inalcançável.
     if (m.minsPerGame >= 73) pontos += 15;   // p90 real
     else if (m.minsPerGame >= 68) pontos += 8; // p75 real
@@ -1178,14 +1285,26 @@ public final class HeuristicsEngine {
     // Tiers escalonados: Fin precisa vencer Arm para meias muito goleadores (v5.1).
     // Com apenas dois tiers (≥0.12:+40), o teto de 75 pts era sempre superado
     // por scoreArmMeia, impedindo Fin/Pas de aparecer para scorers dominantes.
-    if (m.goalsPerGame >= 0.25)      pontos += 70;
-    else if (m.goalsPerGame >= 0.20) pontos += 55;
-    else if (m.goalsPerGame >= 0.15) pontos += 45;
-    else if (m.goalsPerGame >= 0.12) pontos += 35;
-    else if (m.goalsPerGame >= 0.08) pontos += 25;
-    if (ofensivo) pontos += 20;
+    // v12.1: limiares nos percentis reais de 1.295 meias
+    // (gols/jogo p50=0.085 p75=0.134 p90=0.192).
+    // v12.2: escada por perfil e SEM o "+20 por ser meia ofensivo".
+    //   meia ofensivo  gols/jogo p25=0.085 p50=0.121 p75=0.177 p90=0.229 p95=0.270
+    //   meia central   gols/jogo p25=0.031 p50=0.060 p75=0.098 p90=0.136 p95=0.169
+    if (ofensivo) {
+      if (m.goalsPerGame >= 0.270)      pontos += 112; // p95
+      else if (m.goalsPerGame >= 0.229) pontos += 97;  // p90
+      else if (m.goalsPerGame >= 0.177) pontos += 79;  // p75
+      else if (m.goalsPerGame >= 0.121) pontos += 59;  // p50
+      else if (m.goalsPerGame >= 0.085) pontos += 37;  // p25
+    } else {
+      if (m.goalsPerGame >= 0.169)      pontos += 88; // p95
+      else if (m.goalsPerGame >= 0.136) pontos += 74; // p90
+      else if (m.goalsPerGame >= 0.098) pontos += 57; // p75
+      else if (m.goalsPerGame >= 0.060) pontos += 38; // p50
+      else if (m.goalsPerGame >= 0.031) pontos += 19; // p25
+    }
     if (m.penaltyGoals > 0) pontos += 15;
-    if (m.mpg > 0 && m.mpg < 1000) pontos += 15;
+    // v12.1: minutesPerGoal removido — mesma grandeza de goalsPerGame invertida.
     return pontos;
   }
 
@@ -1204,7 +1323,8 @@ public final class HeuristicsEngine {
     if (m.yellowPerGame >= 0.25) pontos += 45;        // p90 — desarmador de verdade
     else if (m.yellowPerGame >= 0.20) pontos += 32;   // p75
     else if (m.yellowPerGame >= 0.156) pontos += 18;  // p50
-    if (m.disciplineIndex >= 0.70) pontos += 15;
+    // v12.1: o corte em 0.70 disparava para 100% dos meias. Subido ao p75 real.
+    if (m.disciplineIndex >= 0.948) pontos += 15;
     // Secundária de volante continua sendo evidência posicional legítima.
     if (m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("volante")))
       pontos += 25;
@@ -2037,11 +2157,10 @@ public final class HeuristicsEngine {
 
     // == Lateral (n=1020) ==
     Map<String, Double> lat = new HashMap<>();
-    lat.put("Cru/Vel", 19.5); lat.put("Vel/Cru", 16.9); lat.put("Cru/Pas", 13.1);
-    lat.put("Vel/Mar", 10.3); lat.put("Cru/Fin", 9.8); lat.put("Vel/Pas", 8.1);
-    lat.put("Des/Cru", 5.7); lat.put("Cru/Mar", 4.5); lat.put("Cru/Des", 3.4);
-    lat.put("Mar/Fin", 3.1); lat.put("Mar/Vel", 2.7); lat.put("Mar/Cru", 2.1);
-    lat.put("Pas/Vel", 1.5);
+    lat.put("Cru/Vel", 22.9); lat.put("Vel/Cru", 22.9); lat.put("Vel/Mar", 11.0);
+    lat.put("Cru/Pas", 9.8); lat.put("Mar/Vel", 7.6); lat.put("Des/Cru", 7.5);
+    lat.put("Mar/Cru", 5.3); lat.put("Cru/Fin", 3.6); lat.put("Cru/Des", 3.1);
+    lat.put("Cru/Mar", 2.8); lat.put("Vel/Pas", 2.0); lat.put("Mar/Fin", 1.5);
     byPos.put(1, lat);
 
     // == Zagueiro (n=1124) ==
@@ -2049,24 +2168,24 @@ public final class HeuristicsEngine {
     zag.put("Des/Cab", 19.8); zag.put("Des/Mar", 17.4); zag.put("Mar/Pas", 13.9);
     zag.put("Mar/Cab", 10.4); zag.put("Mar/Des", 9.2); zag.put("Mar/Res", 7.6);
     zag.put("Mar/Vel", 6.0); zag.put("Des/Pas", 5.2); zag.put("Cab/Mar", 4.6);
-    zag.put("Cab/Des", 3.7); zag.put("Des/Res", 2.1);
+    zag.put("Cab/Des", 3.6); zag.put("Des/Res", 2.1);
     byPos.put(2, zag);
 
     // == Meio-campo (n=1906) ==
     Map<String, Double> mei = new HashMap<>();
-    mei.put("Arm/Pas", 15.1); mei.put("Des/Vel", 13.5); mei.put("Fin/Pas", 10.2);
-    mei.put("Mar/Pas", 8.4); mei.put("Dri/Pas", 5.8); mei.put("Fin/Dri", 5.8);
-    mei.put("Arm/Vel", 5.4); mei.put("Des/Mar", 5.0); mei.put("Des/Pas", 4.7);
-    mei.put("Fin/Arm", 4.4); mei.put("Pas/Dri", 4.0); mei.put("Arm/Dri", 3.8);
-    mei.put("Mar/Des", 3.7); mei.put("Arm/Fin", 3.5); mei.put("Mar/Res", 2.0);
-    mei.put("Mar/Fin", 1.7); mei.put("Des/Res", 1.5); mei.put("Des/Fin", 1.5);
+    mei.put("Arm/Pas", 13.3); mei.put("Des/Vel", 13.3); mei.put("Mar/Pas", 9.0);
+    mei.put("Arm/Fin", 8.4); mei.put("Arm/Vel", 8.4); mei.put("Arm/Dri", 8.3);
+    mei.put("Dri/Pas", 6.0); mei.put("Des/Mar", 5.2); mei.put("Fin/Arm", 5.0);
+    mei.put("Des/Pas", 4.8); mei.put("Fin/Dri", 4.5); mei.put("Mar/Des", 3.8);
+    mei.put("Pas/Dri", 2.7); mei.put("Mar/Res", 2.2); mei.put("Fin/Pas", 2.0);
+    mei.put("Des/Res", 1.5); mei.put("Mar/Fin", 1.5); mei.put("Des/Fin", 1.5);
     mei.put("Vel/Pas", 1.5);
     byPos.put(3, mei);
 
     // == Atacante (n=1782) ==
     Map<String, Double> ata = new HashMap<>();
-    ata.put("Fin/Dri", 24.4); ata.put("Fin/Vel", 20.6); ata.put("Vel/Dri", 12.6);
-    ata.put("Fin/Cab", 10.4); ata.put("Dri/Fin", 8.6); ata.put("Cab/Vel", 7.9);
+    ata.put("Fin/Dri", 24.5); ata.put("Fin/Vel", 20.3); ata.put("Vel/Dri", 12.5);
+    ata.put("Fin/Cab", 10.4); ata.put("Dri/Fin", 8.9); ata.put("Cab/Vel", 7.9);
     ata.put("Cab/Fin", 5.1); ata.put("Fin/Res", 4.9); ata.put("Vel/Fin", 2.7);
     ata.put("Dri/Pas", 2.4); ata.put("Fin/Pas", 1.5);
     byPos.put(4, ata);
