@@ -2,7 +2,40 @@
 // Pacote: br.brasfoot.compiler
 //
 // Implementação oficial conforme MANUAL COMPLETO DO SISTEMA DE CARACTERÍSTICAS DO BRASFOOT v7.0
-// Setembro 2026 – Versão 11.0 — Volante
+// Outubro 2026 – Versão 12.0 — Combinações Inalcançáveis
+//
+// Mudanças v12.0 — diagnóstico sobre as 3 divisões norte-americanas (MLS1,
+// USL, USC3; 2.620 jogadores), focado em combinações que o jogo permite mas
+// que o sistema nunca entregava:
+//   - ZAG_NORMAL não tinha NENHUM par com Cabeceio. Cab só existia em
+//     ZAG_OFENSIVO, cuja porta é taxa de gol (gpg >= 0.06, atingida por ~22%
+//     dos zagueiros). Medido: 70% dos zagueiros com 1,90m ou mais e 100% dos
+//     zagueiros sem estatística NÃO PODIAM receber Cabeceio — Juan Solís,
+//     2,02m, recebia Des/Mar. Cab é domínio aéreo DEFENSIVO num zagueiro, não
+//     atributo ofensivo: os 4 pares com Cab passam a existir em ZAG_NORMAL
+//   - scoreFinAtac contava a taxa de gol TRÊS vezes (duas escadas sobre
+//     goalsPerGame mais um bônus por minutesPerGoal, que é a mesma grandeza
+//     invertida), e o degrau gpg >= 0.10 dispara para 90% dos centroavantes.
+//     Virou uma escada única em percentis reais
+//   - scoreCabAtac dava "+30 por ser centroavante" — bônus de IDENTIDADE que
+//     punha Cab no patamar de Fin e gerava Fin/Cab em 54% dos centroavantes
+//     independentemente da altura. Removido; altura passa a escalonar por
+//     percentil. scoreVelAtac tinha o equivalente para ponta ("+30 por ser
+//     ponta") e um limiar de altura que 75% dos pontas atingiam
+//   - isSegundoAtacante procurava o token "segundo", mas o Transfermarkt
+//     escreve "Seg. Atacante". Nenhum dos 40 jogadores com essa secundária era
+//     reconhecido e o arquétipo de atacante recuado era inteiramente
+//     inacessível (Pas/Fin e Fin/Pas nunca produzidos). Token corrigido, e o
+//     perfil passa a ser detectado antes de ponta/centroavante quando há
+//     evidência de criação
+//   - scoreDesLat terminava com penalidade fixa de -40 que zerava a função
+//     para quase todo lateral (Des p50=0), tornando Des/Cru e Cru/Des pares
+//     mortos. Trocada por escada em percentis e desconto proporcional
+//   - GENERIC_DEF usava a altura IMPUTADA a peso cheio para escolher entre
+//     zagueiro e lateral: a mediana de "Defensor" (1,78m) caía na faixa
+//     <= 1,79 e 90% dos "Defensor" sem altura viravam lateral. Uma estimativa
+//     não decide grupo posicional — sem altura real, usam-se os pesos-base
+//   - Priors regerados a partir deste scoring (10 ligas)
 //
 // Mudanças v11.0 — varredura sistemática atrás da mesma classe de defeito nas
 // funções ainda não auditadas. O volante era subperfil separado e passara
@@ -142,7 +175,7 @@ import java.util.stream.Collectors;
 
 public final class HeuristicsEngine {
 
-  public static final String HEURISTICS_ENGINE_MARKER = "V11.0-VOLANTE";
+  public static final String HEURISTICS_ENGINE_MARKER = "V12.0-COMBINACOES-INALCANCAVEIS";
 
   private static final boolean DEBUG =
       Boolean.parseBoolean(System.getProperty("brasfoot.debug", "false"));
@@ -366,9 +399,26 @@ public final class HeuristicsEngine {
   }
 
   private static boolean isSegundoAtacante(Metrics m) {
-    String p = m.posText.toLowerCase(Locale.ROOT);
-    if (p.contains("segundo atacante") || p.contains("recu")) return true;
-    return m.secondary.stream().anyMatch(s -> s.toLowerCase(Locale.ROOT).contains("segundo"));
+    // v12.0 — o token estava errado. O Transfermarkt escreve "Seg. Atacante"
+    // (abreviado), e o teste antigo procurava "segundo", que nunca casa com
+    // "seg. atacante". Resultado: dos 40 jogadores das três divisões
+    // norte-americanas com essa secundária, NENHUM era reconhecido, e o
+    // arquétipo de atacante recuado ficava inteiramente inacessível —
+    // os pares Pas/Fin e Fin/Pas do pool ATAC_REC nunca eram produzidos.
+    return matchesSegundoAtacante(m.posText)
+        || m.secondary.stream().anyMatch(HeuristicsEngine::matchesSegundoAtacante);
+  }
+
+  /** Reconhece as grafias de "segundo atacante" usadas pelo Transfermarkt. */
+  private static boolean matchesSegundoAtacante(String s) {
+    if (s == null) return false;
+    String t = s.toLowerCase(Locale.ROOT);
+    if (t.contains("segundo atacante") || t.contains("recu")) return true;
+    // "Seg. Atacante" / "Seg Atacante" — a forma que o site realmente usa
+    if (t.contains("seg.") && t.contains("atac")) return true;
+    if (t.startsWith("seg ") && t.contains("atac")) return true;
+    // Equivalentes em outros idiomas do Transfermarkt
+    return t.contains("second striker") || t.contains("hängende spitze");
   }
 
   /**
@@ -878,13 +928,22 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreDesLat(Metrics m) {
+    // v12.0 — a penalidade fixa de -40 no fim zerava a função para quase todo
+    // lateral (medido: Des p50=0, p90=5 em 725 laterais), tornando Des/Cru e
+    // Cru/Des pares mortos no pool. A penalidade existia para evitar que Des
+    // vencesse Cru/Vel, mas um corte fixo é instrumento errado: mata o sinal
+    // em vez de ordená-lo. Trocada por escada em percentis reais de lateral
+    // (amarelo/jogo p50=0.159 p75=0.200 p90=0.245) e uma penalidade
+    // proporcional ao perfil ofensivo.
     double pontos = 0;
-    if (m.yellowPerGame >= 0.10) pontos += 30;
+    if (m.yellowPerGame >= 0.245) pontos += 42;      // p90
+    else if (m.yellowPerGame >= 0.200) pontos += 32; // p75
+    else if (m.yellowPerGame >= 0.159) pontos += 20; // p50
     if (isLateralDefensivo(m)) pontos += 25;
-    if (m.height >= 1.78) pontos += 15;
-    if (m.played >= 120) pontos += 15;
-    if (m.participationPerGame >= 0.08) pontos -= 15;
-    pontos -= 40;
+    if (m.played >= 120) pontos += 12;
+    // Lateral com produção ofensiva real é Cru/Vel, não Des — desconto graduado
+    if (m.participationPerGame >= 0.147) pontos -= 30;      // p90
+    else if (m.participationPerGame >= 0.110) pontos -= 18; // p75
     return Math.max(0, pontos);
   }
 
@@ -1154,29 +1213,62 @@ public final class HeuristicsEngine {
   }
 
   // Atacante
+  // ── v12.0: scoreFinAtac contava a taxa de gol TRÊS vezes ────────────────
+  //
+  // O modelo antigo tinha duas escadas sobre goalsPerGame (uma de até +50 e
+  // outra de até +50) mais um bônus por minutesPerGoal — que é o inverso da
+  // mesma grandeza. Três contagens do mesmo sinal, a mesma classe de defeito
+  // já corrigida em Des/Mar no zagueiro e em scorePasVol no volante.
+  //
+  // Efeito medido em 283 centroavantes: Fin p50=125 contra Cab p50=85, e o par
+  // Fin/Cab respondendo por 54% do perfil. Em pontas, Fin/Vel por 58%.
+  // Agravante: o degrau gpg >= 0.10 dispara para 90% dos centroavantes — era
+  // ponto de graça, não evidência.
+  //
+  // Agora há UMA escada, nos percentis reais de 837 centroavantes
+  // (p25=0.158 p50=0.228 p75=0.300 p90=0.373 p95=0.433) e 1.049 pontas
+  // (p25=0.093 p50=0.135 p75=0.180 p90=0.231), e minutesPerGoal deixa de
+  // pontuar por ser função dos mesmos gols.
   private static double scoreFinAtac(Metrics m, boolean ponta) {
     double pontos = 0;
-    if (m.goalsPerGame >= 0.30) pontos += 50;
-    else if (m.goalsPerGame >= 0.20) pontos += 40;
-    else if (m.goalsPerGame >= 0.15) pontos += 30;
-    else if (m.goalsPerGame >= 0.10) pontos += 20;
-    if (m.goalsPerGame >= 0.19) pontos += 50;
-    else if (m.goalsPerGame >= 0.15) pontos += 35;
-    if (m.mpg > 0 && m.mpg < 300) pontos += 25;
-    else if (m.mpg > 0 && m.mpg < 500) pontos += 15;
+    // Finalização é a característica DEFINIDORA do atacante, então a escada
+    // tem patamar alto — mas cada faixa continua exigindo evidência de gol,
+    // em vez dos três bônus sobrepostos do modelo antigo.
+    if (ponta) {
+      if (m.goalsPerGame >= 0.231) pontos += 125;      // p90
+      else if (m.goalsPerGame >= 0.180) pontos += 105; // p75
+      else if (m.goalsPerGame >= 0.135) pontos += 82;  // p50
+      else if (m.goalsPerGame >= 0.093) pontos += 52;  // p25
+      else pontos += 18;
+    } else {
+      if (m.goalsPerGame >= 0.433) pontos += 135;      // p95
+      else if (m.goalsPerGame >= 0.373) pontos += 122; // p90
+      else if (m.goalsPerGame >= 0.300) pontos += 106; // p75
+      else if (m.goalsPerGame >= 0.228) pontos += 86;  // p50
+      else if (m.goalsPerGame >= 0.158) pontos += 60;  // p25
+      else pontos += 24;
+    }
     if (m.penaltyGoals >= 3) pontos += 10;
-    // Bônus de contexto: pontas com taxa de gol real merecem Fin/Vel em vez de Vel/Dri.
-    // Aumentado de +30 para +50 (v5.2): com +30, Dri ainda vencia o slot secundário
-    // porque ppg >= 0.25 dava +30 ao Dri de forma automática (ex.: Doku, Savinho).
-    if (ponta && m.goalsPerGame >= 0.10) pontos += 50;
+    // v12.0: o antigo bônus de contexto (+50 para ponta com gpg >= 0.10, que
+    // 70% dos pontas atingem) foi absorvido pela escada específica de ponta
+    // acima — era a terceira contagem do mesmo sinal.
     return pontos;
   }
 
   private static double scoreVelAtac(Metrics m, boolean ponta, boolean centroavante) {
     double pontos = 0;
-    if (m.age != null && m.age > 0 && m.age <= 28) pontos += 35;
-    if (ponta) pontos += 30;
-    if (m.height > 0 && m.height <= 1.80) pontos += 20;
+    // v12.0: removido o "+30 por ser ponta" (bônus de identidade) e o limiar de
+    // altura <= 1,80, que 75% dos pontas atingem (mediana real 1,75m). Idade
+    // escalonada em vez de degrau único.
+    if (m.age != null && m.age > 0) {
+      if (m.age <= 23) pontos += 42;
+      else if (m.age <= 26) pontos += 30;
+      else if (m.age <= 28) pontos += 18;
+      else if (m.age >= 33) pontos -= 15;
+      else if (m.age >= 30) pontos -= 7;
+    }
+    if (m.height > 0 && m.height <= 1.72) pontos += 20;
+    else if (m.height > 0 && m.height <= 1.76) pontos += 10;
     if (m.participationPerGame >= 0.25) pontos += 15;
     if (centroavante && m.age != null && m.age > 0 && m.age <= 25) pontos += 25;
     if (ponta && m.assistsPerGame >= 0.10 && m.height > 0 && m.height <= 1.78) pontos -= 15;
@@ -1189,12 +1281,29 @@ public final class HeuristicsEngine {
   }
 
   private static double scoreCabAtac(Metrics m, boolean centroavante) {
+    // v12.0 — REMOVIDO o "+30 por ser centroavante", bônus de IDENTIDADE que
+    // todo centroavante recebia de graça (a mesma classe de defeito já
+    // eliminada em scoreDesMeia na v8.0 e em scoreMarZag na v9.0). Era ele que
+    // punha Cab no mesmo patamar de Fin e gerava Fin/Cab em 54% dos
+    // centroavantes, independentemente da altura real.
+    //
+    // Altura passa a ser escalonada nos percentis reais de 837 centroavantes
+    // (p25=1,79 p50=1,83 p75=1,87 p90=1,90) — cabecear é atributo de porte,
+    // não de rótulo posicional.
     double pontos = 0;
-    if (m.height >= 1.85) pontos += 35;
-    if (centroavante) pontos += 30;
-    if (m.goalsPerGame >= 0.15) pontos += 25;
+    if (m.height >= 1.93) pontos += 95;
+    else if (m.height >= 1.90) pontos += 80;      // p90
+    else if (m.height >= 1.87) pontos += 62;      // p75
+    else if (m.height >= 1.83) pontos += 38;      // p50
+    else if (m.height > 0 && m.height >= 1.79) pontos += 16; // p25
+    // Abaixo do p25 não pontua, mas tambem nao e penalizado: a penalidade
+    // empurrava o atacante baixo para Fin/Res (o unico outro par do pool),
+    // quando o destino natural dele e Fin/Dri ou Cab/Vel pela velocidade.
+    // Gol de cabeça não é separável nos dados, mas um centroavante que marca
+    // muito E é alto tende ao arquétipo Cab — reforço moderado, não definidor.
+    if (m.goalsPerGame >= 0.300 && m.height >= 1.85) pontos += 22;
+    else if (m.goalsPerGame >= 0.228 && m.height >= 1.85) pontos += 12;
     if (m.age != null && m.age >= 26) pontos += 10;
-    if (centroavante && m.goalsPerGame >= 0.25) pontos += 20;
     return pontos;
   }
 
@@ -1310,9 +1419,25 @@ public final class HeuristicsEngine {
         break;
 
       case "ZAG_NORMAL":
-        // "Mas/Pas" era typo — corrigido para Mar/Pas.
+        // v12.0 — Cab ADICIONADO a este pool.
+        //
+        // O pool antigo não tinha nenhum par com Cabeceio, e Cab só existia em
+        // ZAG_OFENSIVO — perfil cuja porta de entrada é taxa de GOL
+        // (isZagueiroOfensivo: gpg >= 0.06, atingido por ~22% dos zagueiros).
+        // Consequência medida em 411 zagueiros das três divisões norte-americanas:
+        // 70% dos zagueiros com 1,90m ou mais NÃO PODIAM receber Cabeceio, e
+        // 100% dos zagueiros sem estatística também não (isZagueiroOfensivo
+        // retorna false quando played == 0). Casos reais: Juan Solís (2,02m)
+        // recebia Des/Mar; Jackson Ragen (1,98m), Des/Mar.
+        //
+        // A causa é conceitual: no pool antigo o cabeceio era tratado como
+        // atributo OFENSIVO, gated por gols. Para um zagueiro, cabecear é
+        // sobretudo domínio aéreo DEFENSIVO — independe de quantos gols faz.
+        // Os pares abaixo já eram legais no jogo (existem em ZAG_OFENSIVO);
+        // nada novo é inventado, apenas deixam de ser inalcançáveis.
         set.addAll(List.of(
-            "Des/Mar","Mar/Des","Des/Pas","Mar/Pas","Des/Res","Mar/Res"));
+            "Des/Mar","Mar/Des","Des/Pas","Mar/Pas","Des/Res","Mar/Res",
+            "Des/Cab","Cab/Des","Mar/Cab","Cab/Mar"));
         break;
 
       case "ZAG_OFENSIVO":
@@ -1469,6 +1594,14 @@ public final class HeuristicsEngine {
       boolean ca    = isCentroavante(m);
       boolean ponta = isPonta(m);
       boolean seg   = isSegundoAtacante(m);
+      // v12.0: o arquétipo de atacante recuado era inalcançável. "Seg. Atacante"
+      // aparece em 40 jogadores das três divisões norte-americanas, mas como os
+      // testes de centroavante e ponta vinham ANTES, só 5 chegavam a ATAC_REC —
+      // e os pares Pas/Fin e Fin/Pas do pool nunca eram produzidos.
+      // Agora o atacante recuado é reconhecido antes, desde que haja evidência
+      // de criação (assistências no p75 da posição, 0.08), para não roubar o
+      // Cabeceio de um centroavante alto que apenas tem a secundária no perfil.
+      if (seg && m.assistsPerGame >= 0.08) return "ATAC_REC";
       if (ca)    return "ATAC_CA";
       if (ponta) return "ATAC_PONTA";
       if (seg)   return "ATAC_REC";
@@ -1894,47 +2027,48 @@ public final class HeuristicsEngine {
   private static Map<Integer, Map<String, Double>> buildEmpiricalPriors() {
     Map<Integer, Map<String, Double>> byPos = new HashMap<>();
 
-    // ── Goleiro (n=462) ──
+    // == Goleiro (n=661) ==
     Map<String, Double> gk = new HashMap<>();
-    gk.put("SGo/Ref", 22.3); gk.put("SGo/Col", 15.4); gk.put("Ref/Col", 11.9);
-    gk.put("Ref/SGo", 11.7); gk.put("Col/Ref", 8.9); gk.put("Col/SGo", 7.4);
-    gk.put("DPe/Col", 5.4); gk.put("Ref/DPe", 5.2); gk.put("SGo/DPe", 3.5);
-    gk.put("Col/DPe", 3.0); gk.put("DPe/Ref", 2.8); gk.put("DPe/SGo", 2.6);
+    gk.put("SGo/Ref", 20.6); gk.put("SGo/Col", 15.0); gk.put("Ref/Col", 10.6);
+    gk.put("Ref/SGo", 10.3); gk.put("Col/Ref", 8.0); gk.put("Col/SGo", 6.4);
+    gk.put("Ref/DPe", 6.2); gk.put("DPe/Col", 5.3); gk.put("DPe/Ref", 5.1);
+    gk.put("SGo/DPe", 5.0); gk.put("DPe/SGo", 4.7); gk.put("Col/DPe", 2.9);
     byPos.put(0, gk);
 
-    // ── Lateral (n=725) ──
+    // == Lateral (n=1020) ==
     Map<String, Double> lat = new HashMap<>();
-    lat.put("Cru/Vel", 17.1); lat.put("Vel/Cru", 16.4); lat.put("Cru/Pas", 13.0);
-    lat.put("Cru/Fin", 11.2); lat.put("Cru/Mar", 10.3); lat.put("Vel/Mar", 10.2);
-    lat.put("Vel/Pas", 9.1); lat.put("Mar/Fin", 4.1); lat.put("Mar/Vel", 3.0);
-    lat.put("Mar/Cru", 2.9); lat.put("Cru/Des", 1.5); lat.put("Pas/Vel", 1.5);
+    lat.put("Cru/Vel", 19.5); lat.put("Vel/Cru", 16.9); lat.put("Cru/Pas", 13.1);
+    lat.put("Vel/Mar", 10.3); lat.put("Cru/Fin", 9.8); lat.put("Vel/Pas", 8.1);
+    lat.put("Des/Cru", 5.7); lat.put("Cru/Mar", 4.5); lat.put("Cru/Des", 3.4);
+    lat.put("Mar/Fin", 3.1); lat.put("Mar/Vel", 2.7); lat.put("Mar/Cru", 2.1);
+    lat.put("Pas/Vel", 1.5);
     byPos.put(1, lat);
 
-    // ── Zagueiro (n=780) ──
+    // == Zagueiro (n=1124) ==
     Map<String, Double> zag = new HashMap<>();
-    zag.put("Des/Mar", 29.9); zag.put("Mar/Pas", 13.1); zag.put("Mar/Des", 11.9);
-    zag.put("Des/Cab", 9.1); zag.put("Des/Pas", 7.6); zag.put("Mar/Res", 6.5);
-    zag.put("Mar/Cab", 6.0); zag.put("Mar/Vel", 5.4); zag.put("Des/Res", 3.7);
-    zag.put("Cab/Des", 3.6); zag.put("Cab/Mar", 3.2);
+    zag.put("Des/Cab", 19.8); zag.put("Des/Mar", 17.4); zag.put("Mar/Pas", 13.9);
+    zag.put("Mar/Cab", 10.4); zag.put("Mar/Des", 9.2); zag.put("Mar/Res", 7.6);
+    zag.put("Mar/Vel", 6.0); zag.put("Des/Pas", 5.2); zag.put("Cab/Mar", 4.6);
+    zag.put("Cab/Des", 3.7); zag.put("Des/Res", 2.1);
     byPos.put(2, zag);
 
-    // ── Meio-campo (n=1323) ──
+    // == Meio-campo (n=1906) ==
     Map<String, Double> mei = new HashMap<>();
-    mei.put("Des/Vel", 13.8); mei.put("Arm/Pas", 13.1); mei.put("Fin/Pas", 11.4);
-    mei.put("Mar/Pas", 7.9); mei.put("Fin/Dri", 7.8); mei.put("Des/Mar", 6.7);
-    mei.put("Des/Pas", 5.4); mei.put("Dri/Pas", 4.8); mei.put("Arm/Vel", 4.5);
-    mei.put("Fin/Arm", 4.2); mei.put("Mar/Des", 4.1); mei.put("Arm/Fin", 3.8);
-    mei.put("Pas/Dri", 2.7); mei.put("Arm/Dri", 2.3); mei.put("Mar/Fin", 2.2);
-    mei.put("Mar/Res", 2.0); mei.put("Des/Fin", 1.5); mei.put("Des/Res", 1.5);
+    mei.put("Arm/Pas", 15.1); mei.put("Des/Vel", 13.5); mei.put("Fin/Pas", 10.2);
+    mei.put("Mar/Pas", 8.4); mei.put("Dri/Pas", 5.8); mei.put("Fin/Dri", 5.8);
+    mei.put("Arm/Vel", 5.4); mei.put("Des/Mar", 5.0); mei.put("Des/Pas", 4.7);
+    mei.put("Fin/Arm", 4.4); mei.put("Pas/Dri", 4.0); mei.put("Arm/Dri", 3.8);
+    mei.put("Mar/Des", 3.7); mei.put("Arm/Fin", 3.5); mei.put("Mar/Res", 2.0);
+    mei.put("Mar/Fin", 1.7); mei.put("Des/Res", 1.5); mei.put("Des/Fin", 1.5);
     mei.put("Vel/Pas", 1.5);
     byPos.put(3, mei);
 
-    // ── Atacante (n=1280) ──
+    // == Atacante (n=1782) ==
     Map<String, Double> ata = new HashMap<>();
-    ata.put("Fin/Vel", 32.4); ata.put("Fin/Cab", 25.5); ata.put("Vel/Dri", 19.7);
-    ata.put("Cab/Vel", 7.5); ata.put("Fin/Dri", 5.5); ata.put("Cab/Fin", 4.5);
-    ata.put("Vel/Fin", 3.0); ata.put("Fin/Res", 1.5); ata.put("Dri/Pas", 1.5);
-    ata.put("Dri/Fin", 1.5);
+    ata.put("Fin/Dri", 24.4); ata.put("Fin/Vel", 20.6); ata.put("Vel/Dri", 12.6);
+    ata.put("Fin/Cab", 10.4); ata.put("Dri/Fin", 8.6); ata.put("Cab/Vel", 7.9);
+    ata.put("Cab/Fin", 5.1); ata.put("Fin/Res", 4.9); ata.put("Vel/Fin", 2.7);
+    ata.put("Dri/Pas", 2.4); ata.put("Fin/Pas", 1.5);
     byPos.put(4, ata);
 
     return byPos;
@@ -2064,10 +2198,18 @@ public final class HeuristicsEngine {
         break;
 
       case "Cab":
-        if (h >= 1.90) wh += 10;
-        else if (h >= 1.85) wh += 6;
-        else if (h >= 1.80) wh += 2;
-        else if (h <= 1.75) wh -= 8;     // 1,70m cabeceador não faz sentido
+        // v12.0: escala alinhada ao scoreCabAtac/scoreCabZag, que passaram a
+        // tratar altura por percentil. Antes um atacante de 1,75m ainda podia
+        // sair com Cab/Vel no fallback, porque a penalidade (-8) não cobria o
+        // prior alto do par. Agora a penalidade acompanha o quanto o jogador
+        // está abaixo do porte esperado para cabecear.
+        if (h >= 1.93) wh += 16;
+        else if (h >= 1.90) wh += 12;
+        else if (h >= 1.86) wh += 7;
+        else if (h >= 1.82) wh += 2;
+        else if (h >= 1.78) wh -= 6;
+        else if (h >= 1.74) wh -= 14;
+        else wh -= 22;                   // 1,70m cabeceador não faz sentido
         break;
 
       case "Dri":
@@ -2173,10 +2315,22 @@ public final class HeuristicsEngine {
       // para escolher entre lateral ofensivo e defensivo.
       String[] subs = {"LAT_GEN", "LAT_GEN", "ZAG_NORMAL", "ZAG_OFENSIVO"};
       double[] w = {6, 14, 10, 5};
-      double h = effectiveHeight(m);
       String sec = String.join(" ", m.secondary).toLowerCase(Locale.ROOT);
-      if (h >= 1.86) { w[2] += 20; w[3] += 8; w[0] -= 4; w[1] -= 8; }
-      else if (h <= 1.79) { w[0] += 8; w[1] += 16; w[2] -= 6; w[3] -= 4; }
+      // v12.0: a altura só decide o GRUPO POSICIONAL quando é dado real.
+      //
+      // Antes usava-se effectiveHeight, e a mediana imputada de "Defensor"
+      // (1,78m) caía na faixa <= 1,79 — então o ajuste disparava a peso cheio e
+      // 90% dos "Defensor" sem altura viravam lateral (pesos 44/4/1 de 49).
+      // Mas "Defensor" é uma categoria MISTA no Transfermarkt, e uma altura
+      // estimada não é evidência para escolher entre zagueiro e lateral.
+      // Sem altura real, mantêm-se os pesos-base, que refletem a mistura.
+      // Isso é o mesmo princípio do IMPUTED_HEIGHT_DAMPING em charAffinity:
+      // uma estimativa nunca vale o mesmo que o dado.
+      if (m.height > 0) {
+        double h = m.height;
+        if (h >= 1.86) { w[2] += 20; w[3] += 8; w[0] -= 4; w[1] -= 8; }
+        else if (h <= 1.79) { w[0] += 8; w[1] += 16; w[2] -= 6; w[3] -= 4; }
+      }
       if (sec.contains("zague")) { w[2] += 10; w[3] += 4; }
       if (sec.contains("meia") || sec.contains("ponta")) { w[1] += 10; }
       double total = 0;
@@ -2190,7 +2344,7 @@ public final class HeuristicsEngine {
       pool = getAllowedCombinations(chosen);
       resolvedPos = profileToPos(chosen);
       if (DEBUG) System.out.println("[DEBUG] getFallbackWeighted: GENERIC_DEF → subperfil="
-          + chosen + " (h=" + h + ") resolvedPos=" + resolvedPos + " pool=" + pool.size() + " pares");
+          + chosen + " (h=" + m.height + ") resolvedPos=" + resolvedPos + " pool=" + pool.size() + " pares");
 
     } else if ("GENERIC_MID".equals(profile)) {
       pool = getGenericGroupPool(3);
